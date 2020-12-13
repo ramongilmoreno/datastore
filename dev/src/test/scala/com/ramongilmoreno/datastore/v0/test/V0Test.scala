@@ -15,8 +15,11 @@ class V0Test extends FlatSpec {
         |  c
         |where
         |  d = e and
-        |  f <> "g" and
-        |  "h" = i
+        |  (
+        |    "f" <> g or
+        |    h = "i"
+        |  )
+        |
         |""".stripMargin
     val result = Query(
       List(
@@ -24,10 +27,14 @@ class V0Test extends FlatSpec {
         Field("b")
       ),
       "c",
-      List(
-        Condition(Field("d"), Equal, Field("e")),
-        Condition(Field("f"), NotEqual, Value("g")),
-        Condition(Value("h"), Equal, Field("i"))
+      Some(
+        AndCondition(
+          SingleCondition(Field("d"), Equal, Field("e")),
+          OrCondition(
+            SingleCondition(Value("f"), NotEqual, Field("g")),
+            SingleCondition(Field("h"), Equal, Value("i")),
+          )
+        )
       )
     )
     assert(QueryParser.parse(query).get == result)
