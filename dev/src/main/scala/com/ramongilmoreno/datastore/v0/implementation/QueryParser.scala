@@ -23,7 +23,7 @@ object QueryParser extends RegexParsers {
   // Skip spaces
   // https://enear.github.io/2016/03/31/parser-combinators/
   override def skipWhitespace = true
-  override val whiteSpace: Regex = "[ \t\r\f]+".r
+  override val whiteSpace: Regex = "[ \t\r\n\f]+".r
 
   def id: Parser[String] = "[A-Za-z0-9%]+".r ^^ { identity }
   def value: Parser[String] = """"[A-Za-z0-9%]+"""".r ^^ { x => x.substring(1, x.length - 1) }

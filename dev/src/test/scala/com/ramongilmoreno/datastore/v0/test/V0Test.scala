@@ -6,7 +6,18 @@ import org.scalatest._
 
 class V0Test extends FlatSpec {
   "Parser" should "parse a simple query" in {
-    val query = """select a, b from c where d = e and f <> "g" and "h" = i"""
+    val query =
+      """
+        |select
+        |  a,
+        |  b
+        |from
+        |  c
+        |where
+        |  d = e and
+        |  f <> "g" and
+        |  "h" = i
+        |""".stripMargin
     val result = Query(
       List(
         Field("a"),
