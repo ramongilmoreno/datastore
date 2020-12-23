@@ -1,21 +1,43 @@
 package com.ramongilmoreno.datastore.v0.implementation
 
+import com.ramongilmoreno.datastore.v0.API.{FieldId, Id, TableId}
+
 import scala.util.matching.Regex
 import scala.util.parsing.combinator._
 
 object QueryParser extends RegexParsers {
 
-  trait FieldOrValue
-  case class Field (id: String) extends FieldOrValue
+  sealed trait FieldOrValue
+  case class Field (id: FieldId) extends FieldOrValue
   case class Value (value: String) extends FieldOrValue
   sealed trait Operation
   object Equal extends Operation { override def toString: String = "=" }
   object NotEqual extends Operation { override def toString: String = "<>" }
-  trait Condition
-  case class SingleCondition (left: FieldOrValue, operator: Operation, right: FieldOrValue) extends Condition
-  case class AndCondition (left: Condition, right: Condition) extends Condition
-  case class OrCondition (left: Condition, right: Condition) extends Condition
-  case class Query (fields: List[Field], table: String, condition: Option[Condition])
+  sealed trait Condition {
+    def text(alias: String): String
+  }
+  case class SingleCondition (left: FieldOrValue, operator: Operation, right: FieldOrValue) extends Condition {
+    def text(alias: String): String = {
+      def f (fieldOrValue: FieldOrValue) = fieldOrValue match {
+        case Field(name) => s"$alias.$name"
+        case Value(value) => "\"" + value + "\""
+      }
+      s"${f(left)} $operator ${f(right)}"
+    }
+  }
+  abstract class TwoCondition(operator: String) extends Condition {
+    def left: Condition
+    def right: Condition
+    def text(alias: String): String = s"($left $operator $right)"
+  }
+  case class AndCondition (left: Condition,right: Condition) extends TwoCondition("AND")
+  case class OrCondition (left: Condition, right: Condition) extends TwoCondition("OR")
+  case class Query (fields: List[FieldId], table: TableId, condition: Option[Condition]) {
+    def text(alias: String): String = condition match {
+      case Some(c) => c.text(alias)
+      case None => ""
+    }
+  }
 
   case object SELECT
   case object FROM
@@ -31,7 +53,7 @@ object QueryParser extends RegexParsers {
   override def skipWhitespace = true
   override val whiteSpace: Regex = "[ \t\r\n\f]+".r
 
-  def id: Parser[String] = "[A-Za-z0-9%]+".r ^^ { identity }
+  def id: Parser[Id] = "[A-Za-z0-9%]+".r ^^ { identity }
   def value: Parser[String] = """"[A-Za-z0-9%]+"""".r ^^ { x => x.substring(1, x.length - 1) }
   def select: QueryParser.Parser[SELECT.type] = "select".r ^^ (_ => SELECT )
   def from: QueryParser.Parser[FROM.type] = "from".r ^^ (_ => FROM )
@@ -41,9 +63,9 @@ object QueryParser extends RegexParsers {
   def close: QueryParser.Parser[CLOSE.type] = """\)""".r ^^ (_ => CLOSE )
   def and: QueryParser.Parser[AND.type] = { "and".r ^^ (_ => AND) }
   def or: QueryParser.Parser[OR.type] = { "or".r ^^ (_ => OR ) }
-  def fields: Parser[List[Field]] =
-    (id ~ comma ~ fields ^^ { case value ~ _ ~ rest => Field(value) :: rest }) |
-    (id ^^ (value => List(Field(value))))
+  def fields: Parser[List[FieldId]] =
+    (id ~ comma ~ fields ^^ { case value ~ _ ~ rest => value :: rest }) |
+    (id ^^ (value => List(value)))
   def fieldOrValue: Parser[FieldOrValue] =
     id ^^ ( id => Field(id) ) |
     value ^^ ( value => Value(value) )

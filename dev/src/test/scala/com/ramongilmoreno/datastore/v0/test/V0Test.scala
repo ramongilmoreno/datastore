@@ -10,8 +10,8 @@ class V0Test extends FlatSpec {
     val query = "select a, b from c"
     val result = Query(
       List(
-        Field("a"),
-        Field("b")
+        "a",
+        "b"
       ),
       "c",
       None
@@ -36,8 +36,8 @@ class V0Test extends FlatSpec {
         |""".stripMargin
     val result = Query(
       List(
-        Field("a"),
-        Field("b")
+        "a",
+        "b"
       ),
       "c",
       Some(
@@ -66,7 +66,7 @@ class V0Test extends FlatSpec {
         |""".stripMargin
     val result = Query(
       List(
-        Field("a"),
+        "a"
       ),
       "b",
       Some(

@@ -4,17 +4,18 @@ object API {
 
   type Values[K, T] = Map[K, T]
 
-  type FieldId = String
-  type FieldValue = String
-  type ValuesActual = Values[FieldId, FieldValue]
+  type Id = String
+  type FieldId = Id
+  type ValueType = String
+  type ValuesActual = Values[FieldId, ValueType]
 
-  class FieldData(val value: FieldValue, val meta: Option[ValuesActual])
+  class FieldData(val value: ValueType, val meta: Option[ValuesActual])
 
   class Record(val data: Values[FieldId, FieldData], val meta: ValuesActual) {}
 
-  type TransactionId = String
-  type TableId = String
-  type CustomId = String
+  type TransactionId = Id
+  type TableId = Id
+  type CustomId = Id
 
   class Request (val originatorId: CustomId, val depends: Option[TransactionId]) {}
 
