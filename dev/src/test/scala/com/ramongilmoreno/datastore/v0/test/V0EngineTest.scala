@@ -1,9 +1,8 @@
 package com.ramongilmoreno.datastore.v0.test
 
 import java.sql.Connection
-
 import com.ramongilmoreno.datastore.v0.API.{FieldId, TableId}
-import com.ramongilmoreno.datastore.v0.implementation.Engine.JDBCStatus
+import com.ramongilmoreno.datastore.v0.implementation.Engine.{JDBCStatus, fieldValueName}
 import com.ramongilmoreno.datastore.v0.implementation.{Engine, QueryParser}
 import org.scalatest._
 
@@ -22,6 +21,8 @@ class V0EngineTest extends AsyncFlatSpec {
       def q(): Future[String] = internalSQL(parsed)
     }.q()
     val alias = Engine.tableAlias
-    result.flatMap(sql => assert(sql == s"select $alias.a as a, $alias.b as b from c as $alias"))
+    val aField = fieldValueName("a")
+    val bField = fieldValueName("b")
+    result.flatMap(sql => assert(sql == s"select $alias.$aField, $alias.$bField from c as $alias"))
   }
 }

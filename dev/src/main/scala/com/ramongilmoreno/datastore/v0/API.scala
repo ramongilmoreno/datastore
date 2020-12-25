@@ -5,30 +5,45 @@ object API {
   type Values[K, T] = Map[K, T]
 
   type Id = String
+  type RecordId = Id
   type FieldId = Id
+  type TableId = Id
   type ValueType = String
   type ValuesActual = Values[FieldId, ValueType]
 
-  class FieldData(val value: ValueType, val meta: Option[ValuesActual])
+  type Timestamp = Long
 
-  class Record(val data: Values[FieldId, FieldData], val meta: ValuesActual) {}
+  abstract class Metadata {
+    var expires: Option[Timestamp] = None
+  }
+
+  class RecordMetadata extends Metadata {
+    var id: Option[RecordId] = None
+  }
+
+  class FieldMetadata extends Metadata {
+    val isInteger: Boolean = false
+    val isDecimal: Boolean = false
+  }
+
+  class FieldData(val value: ValueType, val meta: FieldMetadata)
+
+  class Record(val data: Values[FieldId, FieldData], val meta: RecordMetadata) {}
 
   type TransactionId = Id
-  type TableId = Id
-  type CustomId = Id
 
-  class Request (val originatorId: CustomId, val depends: Option[TransactionId]) {}
+  class Request (val depends: Option[TransactionId]) {}
 
-  class Update(originatorId: CustomId, depends: Option[TransactionId], val updates: List[(TableId, Record)]) extends Request(originatorId, depends) {}
+  class Update(depends: Option[TransactionId], val updates: List[(TableId, Record)]) extends Request(depends) {}
 
-  class Query(originatorId: CustomId, depends: Option[TransactionId], val query: String) extends Request(originatorId, depends) {}
+  class Query(depends: Option[TransactionId], val query: String) extends Request(depends) {}
 
-  class Response(val originatorId: CustomId, val transaction: TransactionId) {}
+  class Response(val transaction: TransactionId) {}
 
-  class UpdateGood(originatorId: CustomId, transaction: TransactionId) extends Response(originatorId, transaction) {}
-  class UpdateBad(originatorId: CustomId, transaction: TransactionId, val reason: String) extends Response(originatorId, transaction) {}
+  class UpdateGood(transaction: TransactionId) extends Response(transaction) {}
+  class UpdateBad(transaction: TransactionId, val reason: String) extends Response(transaction) {}
 
-  class QueryBad(originatorId: CustomId, transaction: TransactionId, val reason: String) extends Response(originatorId, transaction) {}
-  class QueryResult (originatorId: CustomId, transaction: TransactionId, val results: List[Record], meta: Option[ValuesActual]) extends Response(originatorId, transaction)
+  class QueryBad(transaction: TransactionId, val reason: String) extends Response(transaction) {}
+  class QueryResult (transaction: TransactionId, val results: List[Record], meta: Option[ValuesActual]) extends Response(transaction)
 
 }
