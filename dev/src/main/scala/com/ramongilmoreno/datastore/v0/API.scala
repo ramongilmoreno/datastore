@@ -22,13 +22,13 @@ object API {
   }
 
   class FieldMetadata extends Metadata {
-    val isInteger: Boolean = false
-    val isDecimal: Boolean = false
+    var isInteger: Boolean = false
+    var isDecimal: Boolean = false
   }
 
-  class FieldData(val value: ValueType, val meta: FieldMetadata)
+  case class FieldData(value: ValueType, meta: FieldMetadata = new FieldMetadata())
 
-  class Record(val data: Values[FieldId, FieldData], val meta: RecordMetadata) {}
+  case class Record(data: Values[FieldId, FieldData], meta: RecordMetadata = new RecordMetadata()) {}
 
   type TransactionId = Id
 
