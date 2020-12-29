@@ -1,7 +1,7 @@
 package com.ramongilmoreno.datastore.v0.implementation
 
 import com.ramongilmoreno.datastore.v0.API._
-import com.ramongilmoreno.datastore.v0.implementation.QueryParser.{Field, FieldOrValue, Query, Value}
+import com.ramongilmoreno.datastore.v0.implementation.QueryParser.Query
 
 import java.sql.{Connection, ResultSet}
 import java.util.UUID
@@ -24,22 +24,26 @@ object Engine {
 
   def recordIdName(): FieldId = recordName("id")
 
-  def recordName(field: String): FieldId = s"record_$field"
-
   def recordExpiresName(): FieldId = recordName("expires")
 
-  def result(rs: ResultSet, names: List[FieldId])(implicit ec: ExecutionContext): Future[Result] = Future {
-    @scala.annotation.tailrec
-    def f(acc: List[Array[ValueType]]): List[Array[ValueType]] = {
-      if (rs.next()) {
-        f(names.map(rs.getString).toArray :: acc)
-      } else {
-        acc
+  def recordName(field: String): FieldId = s"record_$field"
+
+  def result(rs: ResultSet, names: List[FieldId]): Either[Result, Exception] =
+    try {
+      @scala.annotation.tailrec
+      def f(acc: List[Array[ValueType]]): List[Array[ValueType]] = {
+        if (rs.next()) {
+          f(names.map(rs.getString).toArray :: acc)
+        } else {
+          acc
+        }
       }
+
+      Left(Result(names, f(List()).reverse.toArray))
+    } catch {
+      case e: Exception => Right(e)
     }
 
-    Result(names, f(List()).reverse.toArray)
-  }
 
   trait JDBCStatus {
 
@@ -48,64 +52,85 @@ object Engine {
     val decimalRegex: Regex = "^[0-9]*[^0-9]".r
 
     /**
-     * Tells whether the given table exists
-     */
-    def tableExists(table: TableId)(implicit ec: ExecutionContext): Future[Boolean]
-
-    /**
-     * Tells whether the given table contains the given column
-     */
-    def columnExists(table: TableId, column: FieldId)(implicit ec: ExecutionContext): Future[Boolean]
-
-    /**
      * Connection that will execute queries
      */
-    def connection(): Future[Connection]
+    def connection: Connection
+
+    /**
+     * Tells whether the given table exists
+     */
+    def tableExists(table: TableId)(implicit ec: ExecutionContext): Future[Either[Boolean, Exception]]
+
+    /**
+     * Tells existing columns in the table
+     */
+    def columnsExists(table: TableId, columns: Set[FieldId]): Future[Either[Set[(FieldId, Boolean)], Exception]]
+
+    /**
+     * Ensure columns exists
+     */
+    def makeColumnsExist(table: TableId, columns: Set[FieldId]): Future[Either[Unit, Exception]]
 
     /**
      * Query action
      */
-    def query(q: Query)(implicit ec: ExecutionContext): Future[Result] = {
-      for (
-        query <- internalSQL(q);
-        connection <- connection();
-        ps <- Future {
-          connection.prepareStatement(query)
-        };
-        rs <- Future {
-          ps.executeQuery()
-        };
-        r <- result(rs, q.fields)
-      ) yield {
-        rs.close()
-        r
-      }
+    def query(q: Query)(implicit ec: ExecutionContext): Future[Either[Result, Exception]] = {
+      internalSQL(q)
+        .flatMap {
+          case Left(query) => Future {
+            try {
+              val ps = connection.prepareStatement(query)
+              result(ps.executeQuery(), q.fields)
+            } catch {
+              case e: Exception => Right(e)
+            }
+          }
+          case Right(e) => Future(Right(e))
+        }
     }
 
-    protected def internalSQL(q: Query)(implicit ec: ExecutionContext): Future[String] = {
-      val table = q.table
-      existingColumns(q.table, q.fields).flatMap(
-        fields => {
+    protected def internalSQL(q: Query)(implicit ec: ExecutionContext): Future[Either[String, Exception]] = {
+      columnsExists(q.table, q.fields.toSet).flatMap {
+        case Left(fields) =>
           // Prepare query
-          val f = fields.map(t => t._2 match {
-            case Field(f) => s"$tableAlias.${fieldValueName(f)}"
-            case Value(v) => "\"" + v + "\" as " + fieldValueName(t._1)
-          }).mkString(", ")
+          val f: String = fields.map(t => if (t._2) s"$tableAlias.${fieldValueName(t._1)}" else "\"\" as %s".format(fieldValueName(t._1))).mkString(", ")
           val c = q.condition match {
             case Some(c) => " where " + c.text(tableAlias)
             case None => ""
           }
-          Future(s"select $f from ${q.table} as $tableAlias")
-        }
-      )
+          Future(Left(s"select $f from ${q.table} as $tableAlias$c"))
+        case Right(e) => Future(Right(e))
+      }
     }
 
-    def existingColumns(table: TableId, columns: List[FieldId])(implicit ec: ExecutionContext): Future[List[(FieldId, FieldOrValue)]] =
-      Future.sequence(columns.map(columnExists(table, _))).map(columns.zip(_).map(x => (x._1, if (x._2) Field(x._1) else Value(""))))
+    def update(records: List[Record])(implicit ec: ExecutionContext): Future[Either[List[RecordId], String]] = {
+      def f(remaining: List[Record], acc: List[RecordId]): Future[Either[List[RecordId], String]] = {
+        remaining match {
+          case Nil => Future(Left(acc))
+          case r :: rest =>
+            val u = internalUpdate(r)
+            Future {
+              connection.prepareStatement(u._2)
+            }
+              .flatMap(ps => {
+                (1 to u._3.length).zip(u._3).foreach(x => ps.setObject(x._1, x._2))
+                Future {
+                  ps.execute()
+                }
+                  .flatMap(if (_) f(rest, acc :+ u._1) else Future(Right(
+                    s"""
+                       |Failed to update
+                       |$u
+                       |""".stripMargin
+                  )))
+              })
+        }
+      }
 
-    def update(table: TableId, record: Record)(implicit ec: ExecutionContext): Future[RecordId] = ???
+      f(records, Nil)
+    }
 
-    protected def internalUpdate(table: TableId, record: Record): (String, Seq[Any]) = {
+    protected def internalUpdate(record: Record): (RecordId, String, Seq[Any]) = {
       val values: Seq[(FieldId, Any)] = record.data.toSeq.flatMap(t => {
         val field = t._1
         val value = t._2.value
@@ -117,21 +142,21 @@ object Engine {
       })
       val meta: Seq[(FieldId, Any)] = Seq(record.meta.expires).flatten.map((recordExpiresName(), _))
       val all = values ++ meta
-      val id = (recordIdName(), record.meta.id.getOrElse(UUID.randomUUID().toString))
+      val id: (FieldId, RecordId) = (recordIdName(), record.meta.id.getOrElse(UUID.randomUUID().toString))
       val allAndId = all :+ id
       val q: (String, Seq[Any]) = record.meta.id match {
         case None =>
           // Insert
           val placeHolders = allAndId.map(_ => "?").mkString(", ")
-          (s"insert into ? ($placeHolders) values ($placeHolders)", Seq(table) ++ allAndId.map(_._1) ++ allAndId.map(_._2))
+          (s"insert into ? ($placeHolders) values ($placeHolders)", Seq(record.table) ++ allAndId.map(_._1) ++ allAndId.map(_._2))
         case Some(_) =>
           // Update
           val placeHolders = all.map(_ => "? = ?").mkString(", ")
-          (s"update ? set $placeHolders where ? = ?", Seq(table) ++ allAndId.flatMap(i => Seq(i._1, i._2)))
+          (s"update ? set $placeHolders where ? = ?", Seq(record.table) ++ allAndId.flatMap(i => Seq(i._1, i._2)))
       }
 
       // Completed; return statement and arguments list
-      q
+      (id._2, q._1, q._2)
     }
 
     def integer(value: ValueType): Int = integerRegex.replaceFirstIn(value, "").toInt

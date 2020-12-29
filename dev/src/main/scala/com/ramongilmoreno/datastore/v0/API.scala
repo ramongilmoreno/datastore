@@ -28,13 +28,13 @@ object API {
 
   case class FieldData(value: ValueType, meta: FieldMetadata = new FieldMetadata())
 
-  case class Record(data: Values[FieldId, FieldData], meta: RecordMetadata = new RecordMetadata()) {}
+  case class Record(table: TableId, data: Values[FieldId, FieldData], meta: RecordMetadata = new RecordMetadata()) {}
 
   type TransactionId = Id
 
   class Request (val depends: Option[TransactionId]) {}
 
-  class Update(depends: Option[TransactionId], val updates: List[(TableId, Record)]) extends Request(depends) {}
+  class Update(depends: Option[TransactionId], val updates: List[Record]) extends Request(depends) {}
 
   class Query(depends: Option[TransactionId], val query: String) extends Request(depends) {}
 
