@@ -1,60 +1,58 @@
 package com.ramongilmoreno.datastore.v0.test
 
 import com.ramongilmoreno.datastore.v0.API._
-import com.ramongilmoreno.datastore.v0.implementation.Engine.{JDBCStatus, fieldValueName}
-import com.ramongilmoreno.datastore.v0.implementation.QueryParser.Query
-import com.ramongilmoreno.datastore.v0.implementation.{Engine, QueryParser}
+import com.ramongilmoreno.datastore.v0.implementation.Engine.H2Status
+import com.ramongilmoreno.datastore.v0.implementation.QueryParser
 import org.scalatest._
 
-import java.sql.Connection
-import scala.concurrent.{ExecutionContext, Future}
+import java.sql.{Connection, DriverManager}
+import java.util.UUID
+import scala.concurrent.Future
 
 class V0EngineTest extends AsyncFlatSpec {
 
-  class CustomJDBCStatus extends JDBCStatus {
+  class CustomJDBCStatus extends H2Status {
 
-    def q(query: Query): Future[Either[String, Exception]] = internalSQL(query)
+    Class.forName("org.h2.Driver")
+    private val url = "jdbc:h2:mem:" + UUID.randomUUID().toString
+    private val conn = DriverManager.getConnection(url)
 
-    def u(record: Record): (RecordId, String, Seq[Any]) = internalUpdate(record)
-
-    override def tableExists(table: TableId)(implicit ec: ExecutionContext): Future[Either[Boolean, Exception]] = Future(Left(true))(ec)
-
-    override def columnsExists(table: TableId, columns: Set[FieldId])(implicit ec: ExecutionContext): Future[Either[Set[(FieldId, Boolean)], Exception]] = Future {
-      Left(columns.map((_, true)))
-    }(ec)
-
-    override def makeColumnsExist(table: TableId, columns: Set[FieldId])(implicit ec: ExecutionContext): Future[Either[Unit, Exception]] = throw new UnsupportedOperationException
-
-    override def connection: Connection = throw new UnsupportedOperationException
-
-    override def makeTableExist(table: TableId)(implicit ec: ExecutionContext): Future[Either[Unit, Exception]] = throw new UnsupportedOperationException
+    override def connection: Connection = conn
   }
 
   "Engine" should "get simple SQL for a query without conditions" in {
     val query = "select a, b from c"
     val parsed = QueryParser.parse(query).get
-    val result = new CustomJDBCStatus().q(parsed)
-    val alias = Engine.tableAlias
-    val aField = fieldValueName("a")
-    val bField = fieldValueName("b")
-    result.flatMap {
-      case Left(sql) => Future(assert(sql == s"select $alias.$aField, $alias.$bField from c as $alias"))
-      case Right(exception) => throw exception
-    }
+    val status = new CustomJDBCStatus()
+    status.query(parsed)
+      .flatMap {
+        case Left(result) =>
+          assert(result.columns == parsed.fields)
+          assert(result.rows.length == 0)
+        case Right(exception) =>
+          fail(exception)
+      }
   }
 
   it should "be able of doing an insert" in {
-    val u = new CustomJDBCStatus().u(Record("a", Map("b" -> FieldData("1"), "c" -> FieldData("2")), new RecordMetadata()))
-    assert(u._2 == "insert into ? (?, ?, ?) values (?, ?, ?)")
-    assert(u._3 == Seq("a", Engine.fieldValueName("b"), Engine.fieldValueName("c"), Engine.recordIdName(), "1", "2", u._1))
-  }
-
-  it should "be able of doing an update" in {
-    val recordMeta = new RecordMetadata()
-    val id = "x"
-    recordMeta.id = Some(id)
-    val u = new CustomJDBCStatus().u(Record("a", Map("b" -> FieldData("1"), "c" -> FieldData("2")), recordMeta))
-    assert(u._2 == "update ? set ? = ?, ? = ? where ? = ?")
-    assert(u._3 == Seq("a", Engine.fieldValueName("b"), "1", Engine.fieldValueName("c"), "2", Engine.recordIdName(), id))
+    val record = Record("a", Map("b" -> FieldData("1"), "c" -> FieldData("2")), new RecordMetadata())
+    val status = new CustomJDBCStatus()
+    status.update(List(record))
+      .flatMap {
+        case Left(result) =>
+          val id = result.head
+          status.query(QueryParser.parse("select b, c from a").get)
+            .flatMap {
+              case Left(result) =>
+                Future {
+                  assert(result.columns == List[FieldId]("b", "c"))
+                  assert(result.rows.length == 1)
+                }
+              case Right(exception) =>
+                fail(exception)
+            }
+        case Right(exception) =>
+          fail(exception)
+      }
   }
 }

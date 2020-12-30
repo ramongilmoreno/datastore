@@ -10,6 +10,9 @@ val akkaVersion = "2.6.4"
 libraryDependencies += "com.typesafe.akka" %% "akka-actor-typed" % akkaVersion
 libraryDependencies += "com.typesafe.akka" %% "akka-actor-testkit-typed" % akkaVersion % Test
 
+// Database support
+libraryDependencies += "com.h2database" % "h2" % "1.4.200"
+
 // Testing
 libraryDependencies += "org.scalatest" %% "scalatest" % "3.0.8" % "test"
 

@@ -145,4 +145,5 @@ object QueryParser extends RegexParsers {
   case object AND
 
   case object OR
+
 }
