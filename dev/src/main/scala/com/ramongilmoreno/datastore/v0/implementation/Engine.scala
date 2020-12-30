@@ -5,6 +5,7 @@ import com.ramongilmoreno.datastore.v0.implementation.QueryParser.Query
 
 import java.sql.{Connection, ResultSet}
 import java.util.UUID
+import scala.annotation.tailrec
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.matching.Regex
 
@@ -20,13 +21,13 @@ object Engine {
 
   def fieldMetaDecimalName(field: String): FieldId = fieldMetaName(field, "decimal")
 
-  def fieldMetaName(field: String, suffix: String): FieldId = name(field, "meta", suffix)
+  private def fieldMetaName(field: String, suffix: String): FieldId = name(field, "meta", suffix)
 
   def recordIdName(): FieldId = recordName("id")
 
   def recordExpiresName(): FieldId = recordName("expires")
 
-  def recordName(field: String): FieldId = s"record_$field"
+  private def recordName(field: String): FieldId = s"record_$field"
 
   def result(rs: ResultSet, names: List[FieldId]): Either[Result, Exception] =
     try {
@@ -64,28 +65,44 @@ object Engine {
     /**
      * Tells existing columns in the table
      */
-    def columnsExists(table: TableId, columns: Set[FieldId]): Future[Either[Set[(FieldId, Boolean)], Exception]]
+    def columnsExists(table: TableId, columns: Set[FieldId])(implicit ec: ExecutionContext): Future[Either[Set[(FieldId, Boolean)], Exception]]
+
+    /**
+     * Ensure table exists
+     */
+    def makeTableExist(table: TableId)(implicit ec: ExecutionContext): Future[Either[Unit, Exception]]
 
     /**
      * Ensure columns exists
      */
-    def makeColumnsExist(table: TableId, columns: Set[FieldId]): Future[Either[Unit, Exception]]
+    def makeColumnsExist(table: TableId, columns: Set[FieldId])(implicit ec: ExecutionContext): Future[Either[Unit, Exception]]
 
     /**
      * Query action
      */
     def query(q: Query)(implicit ec: ExecutionContext): Future[Either[Result, Exception]] = {
-      internalSQL(q)
+      tableExists(q.table)
         .flatMap {
-          case Left(query) => Future {
-            try {
-              val ps = connection.prepareStatement(query)
-              result(ps.executeQuery(), q.fields)
-            } catch {
-              case e: Exception => Right(e)
-            }
-          }
-          case Right(e) => Future(Right(e))
+          case Left(false) =>
+            // Empty result if table does not exist
+            Future(Left(Result(q.fields, Array.empty)))
+          case Left(true) =>
+            // Run query
+            internalSQL(q)
+              .flatMap {
+                case Left(query) => Future {
+                  try {
+                    val ps = connection.prepareStatement(query)
+                    result(ps.executeQuery(), q.fields)
+                  } catch {
+                    case e: Exception => Right(e)
+                  }
+                }
+                case Right(e) => Future(Right(e))
+              }
+          case Right(e) =>
+            // Exception thrown...
+            Future(Right(e))
         }
     }
 
@@ -104,27 +121,20 @@ object Engine {
     }
 
     def update(records: List[Record])(implicit ec: ExecutionContext): Future[Either[List[RecordId], String]] = {
-      def f(remaining: List[Record], acc: List[RecordId]): Future[Either[List[RecordId], String]] = {
-        remaining match {
-          case Nil => Future(Left(acc))
-          case r :: rest =>
-            val u = internalUpdate(r)
-            Future {
-              connection.prepareStatement(u._2)
-            }
-              .flatMap(ps => {
-                (1 to u._3.length).zip(u._3).foreach(x => ps.setObject(x._1, x._2))
-                Future {
-                  ps.execute()
-                }
-                  .flatMap(if (_) f(rest, acc :+ u._1) else Future(Right(
-                    s"""
-                       |Failed to update
-                       |$u
-                       |""".stripMargin
-                  )))
-              })
-        }
+      def f(remaining: List[Record], acc: List[RecordId]): Future[Either[List[RecordId], String]] = remaining match {
+        case Nil => Future(Left(acc))
+        case r :: rest =>
+          val u = internalUpdate(r)
+          Future {
+            connection.prepareStatement(u._2)
+          }
+            .flatMap(ps => {
+              (1 to u._3.length).zip(u._3).foreach(x => ps.setObject(x._1, x._2))
+              Future {
+                ps.execute()
+              }
+                .flatMap(if (_) f(rest, acc :+ u._1) else Future(Right(s"Failed to update [$u]")))
+            })
       }
 
       f(records, Nil)
@@ -162,6 +172,132 @@ object Engine {
     def integer(value: ValueType): Int = integerRegex.replaceFirstIn(value, "").toInt
 
     def decimal(value: ValueType): Int = decimalRegex.replaceFirstIn(value, "").toInt
+  }
+
+  class H2(val connection: Connection) extends JDBCStatus {
+    /**
+     * Ensure columns exists
+     */
+    override def makeColumnsExist(table: TableId, columns: Set[FieldId])(implicit ec: ExecutionContext): Future[Either[Unit, Exception]] =
+      columnsExists(table, columns)
+        .flatMap {
+          case Left(c) =>
+            val missing: Set[FieldId] = c.filterNot(_._2).map(_._1)
+            if (missing.isEmpty) {
+              val columns: List[(FieldId, String)] = missing.toList.flatMap(field => List(
+                (fieldValueName(field), "VARCHAR(500)"),
+                (fieldMetaIntName(field), "BIGINT"),
+                (fieldMetaDecimalName(field), "BIGINT")
+              ))
+
+              def exhaust(pending: List[(FieldId, String)]): Either[Unit, Exception] = pending match {
+                case Nil => Left()
+                case column :: rest =>
+                  val q = "alter table ? add column ? ?"
+                  try {
+                    val ps = connection.prepareStatement(q)
+                    try {
+                      ps.setString(1, table)
+                      ps.setString(2, column._1)
+                      ps.setString(1, column._2)
+                      if (ps.execute()) exhaust(rest) else Right(new IllegalStateException(s"Failed to alter table [$q]"))
+                    } finally {
+                      ps.close()
+                    }
+                  } catch {
+                    case e: Exception => Right(e)
+                  }
+              }
+
+              Future {
+                exhaust(columns)
+              }
+            } else {
+              Future(Left(() => {}))
+            }
+          case Right(e) => Future(Right(e))
+        }
+
+    /**
+     * Tells existing columns in the table
+     */
+    override def columnsExists(table: TableId, columns: Set[FieldId])(implicit ec: ExecutionContext): Future[Either[Set[(FieldId, Boolean)], Exception]] =
+      Future {
+        try {
+          // http://h2-database.66688.n3.nabble.com/Best-practice-Test-for-existence-of-table-etc-td4024451.html
+          val ps = connection.prepareStatement("select column_name from information_schema.columns where table_name = ?")
+          try {
+            ps.setString(1, table)
+            val rs = ps.executeQuery()
+
+            @tailrec
+            def exhaust(acc: Set[String]): Set[String] =
+              if (rs.next()) {
+                exhaust(acc + rs.getString(1))
+              } else {
+                acc
+              }
+
+            val found = exhaust(Set.empty)
+            Left(columns.map(c => (c, found.contains(c))))
+          } finally {
+            ps.close()
+          }
+        } catch {
+          case e: Exception => Right(e)
+        }
+      }
+
+    /**
+     * Ensure table exists
+     */
+    override def makeTableExist(table: TableId)(implicit ec: ExecutionContext): Future[Either[Unit, Exception]] =
+      tableExists(table).flatMap({
+        case Left(true) =>
+          // Do nothing
+          Future(Left())
+        case Left(false) =>
+          // Create table
+          Future {
+            try {
+              val q = "create table ? (? VARCHAR(500) PRIMARY KEY, ? BIGINT)"
+              val ps = connection.prepareStatement(q)
+              try {
+                ps.setString(1, table)
+                ps.setString(2, recordIdName())
+                ps.setString(3, recordExpiresName())
+                if (ps.execute()) Left() else Right(new IllegalStateException(s"Could not create table [$q]"))
+              } finally {
+                ps.close()
+              }
+            } catch {
+              case e: Exception => Right(e)
+            }
+          }
+          Future(Left())
+        case Right(e) => Future(Right(e))
+      })
+
+    /**
+     * Tells whether the given table exists
+     */
+    override def tableExists(table: TableId)(implicit ec: ExecutionContext): Future[Either[Boolean, Exception]] =
+      Future {
+        try {
+          // http://h2-database.66688.n3.nabble.com/Best-practice-Test-for-existence-of-table-etc-td4024451.html
+          val ps = connection.prepareStatement("select count(*) from information_schema.tables where table_name = ?")
+          try {
+            ps.setString(1, table)
+            val rs = ps.executeQuery()
+            rs.next()
+            if (rs.getInt(1) == 1) Left(true) else Left(false)
+          } finally {
+            ps.close()
+          }
+        } catch {
+          case e: Exception => Right(e)
+        }
+      }
   }
 
   case class Result(columns: List[FieldId], rows: Array[Array[ValueType]]) {

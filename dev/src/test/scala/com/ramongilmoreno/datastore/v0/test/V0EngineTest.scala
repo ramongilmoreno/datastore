@@ -19,16 +19,15 @@ class V0EngineTest extends AsyncFlatSpec {
 
     override def tableExists(table: TableId)(implicit ec: ExecutionContext): Future[Either[Boolean, Exception]] = Future(Left(true))(ec)
 
-    override def columnsExists(table: TableId, columns: Set[FieldId]): Future[Either[Set[(FieldId, Boolean)], Exception]] = Future {
+    override def columnsExists(table: TableId, columns: Set[FieldId])(implicit ec: ExecutionContext): Future[Either[Set[(FieldId, Boolean)], Exception]] = Future {
       Left(columns.map((_, true)))
-    }
+    }(ec)
 
-    /**
-     * Ensure columns exists
-     */
-    override def makeColumnsExist(table: TableId, columns: Set[FieldId]): Future[Either[Unit, Exception]] = Future(Left(() => {}))
+    override def makeColumnsExist(table: TableId, columns: Set[FieldId])(implicit ec: ExecutionContext): Future[Either[Unit, Exception]] = throw new UnsupportedOperationException
 
     override def connection: Connection = throw new UnsupportedOperationException
+
+    override def makeTableExist(table: TableId)(implicit ec: ExecutionContext): Future[Either[Unit, Exception]] = throw new UnsupportedOperationException
   }
 
   "Engine" should "get simple SQL for a query without conditions" in {
@@ -38,7 +37,7 @@ class V0EngineTest extends AsyncFlatSpec {
     val alias = Engine.tableAlias
     val aField = fieldValueName("a")
     val bField = fieldValueName("b")
-    result.flatMap{
+    result.flatMap {
       case Left(sql) => Future(assert(sql == s"select $alias.$aField, $alias.$bField from c as $alias"))
       case Right(exception) => throw exception
     }
