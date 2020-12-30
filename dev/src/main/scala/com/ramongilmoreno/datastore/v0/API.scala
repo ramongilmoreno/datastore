@@ -12,6 +12,7 @@ object API {
   type ValuesActual = Values[FieldId, ValueType]
 
   type Timestamp = Long
+  type TransactionId = Id
 
   abstract class Metadata {
     var expires: Option[Timestamp] = None
@@ -30,9 +31,7 @@ object API {
 
   case class Record(table: TableId, data: Values[FieldId, FieldData], meta: RecordMetadata = new RecordMetadata()) {}
 
-  type TransactionId = Id
-
-  class Request (val depends: Option[TransactionId]) {}
+  class Request(val depends: Option[TransactionId]) {}
 
   class Update(depends: Option[TransactionId], val updates: List[Record]) extends Request(depends) {}
 
@@ -41,9 +40,11 @@ object API {
   class Response(val transaction: TransactionId) {}
 
   class UpdateGood(transaction: TransactionId) extends Response(transaction) {}
+
   class UpdateBad(transaction: TransactionId, val reason: String) extends Response(transaction) {}
 
   class QueryBad(transaction: TransactionId, val reason: String) extends Response(transaction) {}
-  class QueryResult (transaction: TransactionId, val results: List[Record], meta: Option[ValuesActual]) extends Response(transaction)
+
+  class QueryResult(transaction: TransactionId, val results: List[Record], meta: Option[ValuesActual]) extends Response(transaction)
 
 }
