@@ -21,20 +21,21 @@ object Engine {
 
   def fieldMetaDecimalName(field: String): FieldId = fieldMetaName(field, "decimal")
 
-  def recordIdName(): FieldId = recordName("id")
-
-  def recordExpiresName(): FieldId = recordName("expires")
-
-  private def recordName(field: String): FieldId = s"record_$field".toUpperCase(Locale.US)
-
   def tableName(table: TableId): String = s"table_$table".toUpperCase(Locale.US)
+
+  def now(): Long = System.currentTimeMillis()
 
   def result(rs: ResultSet, names: List[FieldId]): Either[Result, Exception] =
     try {
       @scala.annotation.tailrec
-      def f(acc: List[Array[ValueType]]): List[Array[ValueType]] = {
+      def f(acc: List[(Array[ValueType], RecordMetadata)]): List[(Array[ValueType], RecordMetadata)] = {
         if (rs.next()) {
-          f(names.map(field => rs.getString(fieldValueName(field))).toArray :: acc)
+          val id: RecordId = rs.getString(recordIdName())
+          val expires: Option[Timestamp] = Option(rs.getLong(recordExpiresName()))
+          val meta = new RecordMetadata()
+          meta.id = Some(id)
+          meta.expires = expires
+          f((names.map(field => rs.getString(fieldValueName(field))).toArray, meta) :: acc)
         } else {
           acc
         }
@@ -44,6 +45,12 @@ object Engine {
     } catch {
       case e: Exception => Right(e)
     }
+
+  def recordIdName(): FieldId = recordName("id")
+
+  private def recordName(field: String): FieldId = s"record_$field".toUpperCase(Locale.US)
+
+  def recordExpiresName(): FieldId = recordName("expires")
 
   def fieldValueName(field: String): FieldId = name(field, "field", "value")
 
@@ -93,8 +100,14 @@ object Engine {
               .flatMap {
                 case Left(query) => Future {
                   try {
-                    val ps = connection.prepareStatement(query)
-                    result(ps.executeQuery(), q.fields)
+                    val ps = connection.prepareStatement(query._1)
+                    try {
+                      val args = query._2
+                      (1 to args.length).zip(args).foreach(f => ps.setObject(f._1, f._2))
+                      result(ps.executeQuery(), q.fields)
+                    } finally {
+                      ps.close()
+                    }
                   } catch {
                     case e: Exception => Right(e)
                   }
@@ -107,17 +120,19 @@ object Engine {
         }
     }
 
-    protected def internalSQL(q: Query)(implicit ec: ExecutionContext): Future[Either[String, Exception]] = {
+    protected def internalSQL(q: Query)(implicit ec: ExecutionContext): Future[Either[(String, List[Any]), Exception]] = {
       columnsExists(q.table, q.fields.toSet).flatMap {
         case Left(fields) =>
           // Prepare query
           val f: String = fields.map(t => if (t._2) s"$tableAlias.${fieldValueName(t._1)}" else "\"\" as %s".format(fieldValueName(t._1))).mkString(", ")
           val c = q.condition match {
-            case Some(c) => " where " + c.text(tableAlias)
+            case Some(c) => " and " + c.text(tableAlias)
             case None => ""
           }
           val queryTableName = tableName(q.table)
-          Future(Left(s"select $f from $queryTableName as $tableAlias$c"))
+          val queryIdName = recordIdName()
+          val queryExpiresName = recordExpiresName()
+          Future(Left((s"select $tableAlias.$queryIdName, $tableAlias.$queryExpiresName, $f from $queryTableName as $tableAlias where ($tableAlias.$queryExpiresName is null or $tableAlias.$queryExpiresName >= ?)$c", List(now()))))
         case Right(e) => Future(Right(new IllegalStateException(s"Failed to check that columns exist [$q]", e)))
       }
     }
@@ -322,10 +337,12 @@ object Engine {
       }
   }
 
-  case class Result(columns: List[FieldId], rows: Array[Array[ValueType]]) {
-    def count(): Int = columns.length
+  case class Result(columns: List[FieldId], rows: Array[(Array[ValueType], RecordMetadata)]) {
+    def count(): Int = rows.length
 
-    def value(row: Int, column: FieldId): ValueType = rows(row)(columns.indexOf(column))
+    def meta(row: Int): RecordMetadata = rows(row)._2
+
+    def value(row: Int, column: FieldId): ValueType = rows(row)._1(columns.indexOf(column))
   }
 
 }

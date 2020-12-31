@@ -11,13 +11,13 @@ import scala.concurrent.Future
 
 class V0EngineTest extends AsyncFlatSpec {
 
-  class CustomJDBCStatus extends H2Status {
+  def sampleRecordExpires(delta: Long): Record =
+    sampleRecord(Some(System.currentTimeMillis() + delta))
 
-    Class.forName("org.h2.Driver")
-    private val url = "jdbc:h2:mem:" + UUID.randomUUID().toString
-    private val conn = DriverManager.getConnection(url)
-
-    override def connection: Connection = conn
+  def sampleRecord(expires: Option[Timestamp] = None): Record = {
+    val meta = new RecordMetadata()
+    meta.expires = expires
+    Record("a", Map("b" -> FieldData("1"), "c" -> FieldData("2")), meta)
   }
 
   "Engine" should "get simple SQL for a query without conditions" in {
@@ -34,18 +34,45 @@ class V0EngineTest extends AsyncFlatSpec {
       }
   }
 
+  class CustomJDBCStatus extends H2Status {
+    Class.forName("org.h2.Driver")
+    private val url = "jdbc:h2:mem:" + UUID.randomUUID().toString
+    private val conn = DriverManager.getConnection(url)
+
+    override def connection: Connection = conn
+  }
+
   it should "be able of doing an insert" in {
-    val record = Record("a", Map("b" -> FieldData("1"), "c" -> FieldData("2")), new RecordMetadata())
     val status = new CustomJDBCStatus()
-    status.update(List(record))
+    status.update(List(sampleRecord()))
       .flatMap {
         case Left(result) =>
-          val id = result.head
           status.query(QueryParser.parse("select b, c from a").get)
             .flatMap {
               case Left(result) =>
                 Future {
                   assert(result.columns == List[FieldId]("b", "c"))
+                  assert(result.rows.length == 1)
+                }
+              case Right(exception) =>
+                fail(exception)
+            }
+        case Right(exception) =>
+          fail(exception)
+      }
+  }
+
+
+  it should "be able of ignoring stale records" in {
+    val status = new CustomJDBCStatus()
+    val delta = 60 * 1000
+    status.update(List(sampleRecordExpires(-delta), sampleRecordExpires(delta)))
+      .flatMap {
+        case Left(result) =>
+          status.query(QueryParser.parse("select b, c from a").get)
+            .flatMap {
+              case Left(result) =>
+                Future {
                   assert(result.rows.length == 1)
                 }
               case Right(exception) =>

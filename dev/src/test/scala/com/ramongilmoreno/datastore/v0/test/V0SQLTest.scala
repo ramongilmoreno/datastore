@@ -1,7 +1,7 @@
 package com.ramongilmoreno.datastore.v0.test
 
 import com.ramongilmoreno.datastore.v0.API._
-import com.ramongilmoreno.datastore.v0.implementation.Engine.{JDBCStatus, fieldValueName, recordIdName, tableName}
+import com.ramongilmoreno.datastore.v0.implementation.Engine._
 import com.ramongilmoreno.datastore.v0.implementation.QueryParser.Query
 import com.ramongilmoreno.datastore.v0.implementation.{Engine, QueryParser}
 import org.scalatest._
@@ -13,7 +13,7 @@ class V0SQLTest extends AsyncFlatSpec {
 
   class NoOperationJDBCStatus extends JDBCStatus {
 
-    def q(query: Query): Future[Either[String, Exception]] = internalSQL(query)
+    def q(query: Query): Future[Either[(String, List[Any]), Exception]] = internalSQL(query)
 
     def u(record: Record): (RecordId, String, Seq[Any]) = internalUpdate(record)
 
@@ -38,8 +38,12 @@ class V0SQLTest extends AsyncFlatSpec {
     val aField = fieldValueName("a")
     val bField = fieldValueName("b")
     val cTable = tableName("c")
+    val idField = recordIdName()
+    val expiresField = recordExpiresName()
     result.flatMap {
-      case Left(sql) => Future(assert(sql == s"select $alias.$aField, $alias.$bField from $cTable as $alias"))
+      case Left(q) => Future {
+        assert(q._1 == s"select $alias.$idField, $alias.$expiresField, $alias.$aField, $alias.$bField from $cTable as $alias where ($alias.$expiresField is null or $alias.$expiresField >= ?)")
+      }
       case Right(exception) => throw exception
     }
   }

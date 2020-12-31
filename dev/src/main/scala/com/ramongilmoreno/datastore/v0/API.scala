@@ -15,11 +15,11 @@ object API {
   type TransactionId = Id
 
   abstract class Metadata {
-    var expires: Option[Timestamp] = None
   }
 
   class RecordMetadata extends Metadata {
     var id: Option[RecordId] = None
+    var expires: Option[Timestamp] = None
   }
 
   class FieldMetadata extends Metadata {
