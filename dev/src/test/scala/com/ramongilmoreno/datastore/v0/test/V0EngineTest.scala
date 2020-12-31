@@ -66,7 +66,9 @@ class V0EngineTest extends AsyncFlatSpec {
   it should "be able of ignoring stale records" in {
     val status = new CustomJDBCStatus()
     val delta = 60 * 1000
-    status.update(List(sampleRecordExpires(-delta), sampleRecordExpires(delta)))
+    val stale = sampleRecordExpires(-delta)
+    val current = sampleRecordExpires(delta)
+    status.update(List(stale, current))
       .flatMap {
         case Left(result) =>
           status.query(QueryParser.parse("select b, c from a").get)
@@ -74,6 +76,7 @@ class V0EngineTest extends AsyncFlatSpec {
               case Left(result) =>
                 Future {
                   assert(result.rows.length == 1)
+                  assert(result.meta(0).expires == current.meta.expires)
                 }
               case Right(exception) =>
                 fail(exception)
