@@ -31,7 +31,8 @@ object Engine {
       def f(acc: List[(Array[ValueType], RecordMetadata)]): List[(Array[ValueType], RecordMetadata)] = {
         if (rs.next()) {
           val id: RecordId = rs.getString(recordIdName())
-          val expires: Option[Timestamp] = Option(rs.getLong(recordExpiresName()))
+          val o = rs.getLong(recordExpiresName())
+          val expires: Option[Timestamp] = if (rs.wasNull()) None else Some(o)
           val meta = new RecordMetadata()
           meta.id = Some(id)
           meta.expires = expires

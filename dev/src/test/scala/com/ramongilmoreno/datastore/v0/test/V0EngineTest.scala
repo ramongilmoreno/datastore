@@ -53,6 +53,7 @@ class V0EngineTest extends AsyncFlatSpec {
                 Future {
                   assert(result.columns == List[FieldId]("b", "c"))
                   assert(result.rows.length == 1)
+                  assert(result.meta(0).expires == None)
                 }
               case Right(exception) =>
                 fail(exception)
