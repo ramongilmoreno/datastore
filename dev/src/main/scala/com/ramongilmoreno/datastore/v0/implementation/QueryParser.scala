@@ -88,11 +88,10 @@ object QueryParser extends RegexParsers {
     def text(alias: String): String
   }
 
-  abstract class TwoCondition(operator: String) extends Condition {
+  abstract class TwoCondition extends Condition {
     def left: Condition
-
     def right: Condition
-
+    def operator: String
     def text(alias: String): String = s"($left $operator $right)"
   }
 
@@ -111,9 +110,9 @@ object QueryParser extends RegexParsers {
     }
   }
 
-  case class AndCondition(left: Condition, right: Condition) extends TwoCondition("AND")
+  case class AndCondition(left: Condition, right: Condition, operator: String = "AND") extends TwoCondition
 
-  case class OrCondition(left: Condition, right: Condition) extends TwoCondition("OR")
+  case class OrCondition(left: Condition, right: Condition, operator: String = "OR") extends TwoCondition
 
   case class Query(fields: List[FieldId], table: TableId, condition: Option[Condition]) {
     def text(alias: String): String = condition match {

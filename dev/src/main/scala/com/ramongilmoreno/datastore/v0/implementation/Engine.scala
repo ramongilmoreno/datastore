@@ -1,7 +1,7 @@
 package com.ramongilmoreno.datastore.v0.implementation
 
 import com.ramongilmoreno.datastore.v0.API._
-import com.ramongilmoreno.datastore.v0.implementation.QueryParser.Query
+import com.ramongilmoreno.datastore.v0.implementation.QueryParser.{Condition, Field, FieldOrValue, Query, SingleCondition, TwoCondition, Value}
 
 import java.sql.{Connection, ResultSet}
 import java.util.{Locale, UUID}
@@ -120,20 +120,46 @@ object Engine {
             Future(Right(e))
         }
     }
+    type WorkInProgress = (String, List[Any])
 
-    protected def internalSQL(q: Query)(implicit ec: ExecutionContext): Future[Either[(String, List[Any]), Exception]] = {
+    protected def internalCondition(c: Condition): WorkInProgress = {
+
+      def fov (arg: FieldOrValue, acc: WorkInProgress): WorkInProgress = arg match {
+        case field: Field =>
+          val fname = fieldValueName(field.id)
+          (s"${acc._1}$tableAlias.$fname", acc._2)
+        case value: Value =>
+          (acc._1 + "?", acc._2 :+ value.value)
+      }
+
+      def f (c: Condition, acc: WorkInProgress): WorkInProgress = c match {
+        case two: TwoCondition =>
+          val l = f(two.left, (acc._1 + "(", acc._2))
+          val r = f(two.right, (s"${l._1} ${two.operator} ", l._2))
+          (r._1 + ")", r._2)
+        case single: SingleCondition =>
+          val l = fov(single.left, (acc._1 + "(", acc._2))
+          val r = fov(single.right, (s"${l._1} ${single.operator} ", l._2))
+          (r._1 + ")", r._2)
+      }
+      f(c, ("", List.empty))
+    }
+
+    protected def internalSQL(q: Query)(implicit ec: ExecutionContext): Future[Either[WorkInProgress, Exception]] = {
       columnsExists(q.table, q.fields.toSet).flatMap {
         case Left(fields) =>
           // Prepare query
           val f: String = fields.map(t => if (t._2) s"$tableAlias.${fieldValueName(t._1)}" else "\"\" as %s".format(fieldValueName(t._1))).mkString(", ")
           val c = q.condition match {
-            case Some(c) => " and " + c.text(tableAlias)
-            case None => ""
+            case Some(c) =>
+              val r = internalCondition(c)
+              (s" and ${r._1}", r._2)
+            case None => ("", List.empty)
           }
           val queryTableName = tableName(q.table)
           val queryIdName = recordIdName()
           val queryExpiresName = recordExpiresName()
-          Future(Left((s"select $tableAlias.$queryIdName, $tableAlias.$queryExpiresName, $f from $queryTableName as $tableAlias where ($tableAlias.$queryExpiresName is null or $tableAlias.$queryExpiresName >= ?)$c", List(now()))))
+          Future(Left((s"select $tableAlias.$queryIdName, $tableAlias.$queryExpiresName, $f from $queryTableName as $tableAlias where ($tableAlias.$queryExpiresName is null or $tableAlias.$queryExpiresName >= ?)${c._1}", now() +: c._2)))
         case Right(e) => Future(Right(new IllegalStateException(s"Failed to check that columns exist [$q]", e)))
       }
     }

@@ -20,6 +20,11 @@ class V0EngineTest extends AsyncFlatSpec {
     Record("a", Map("b" -> FieldData("1"), "c" -> FieldData("2")), meta)
   }
 
+  def sampleRecordData(value: String): Record = {
+    val meta = new RecordMetadata()
+    Record("a", Map("b" -> FieldData(value)), meta)
+  }
+
   "Engine" should "get simple SQL for a query without conditions" in {
     val query = "select a, b from c"
     val parsed = QueryParser.parse(query).get
@@ -78,6 +83,26 @@ class V0EngineTest extends AsyncFlatSpec {
                 Future {
                   assert(result.rows.length == 1)
                   assert(result.meta(0).expires == current.meta.expires)
+                }
+              case Right(exception) =>
+                fail(exception)
+            }
+        case Right(exception) =>
+          fail(exception)
+      }
+  }
+
+  it should "be able of querying with conditions" in {
+    val status = new CustomJDBCStatus()
+    status.update((1 to 3).map(i => sampleRecordData(i.toString)).toList)
+      .flatMap {
+        case Left(_) =>
+          status.query(QueryParser.parse("""select b from a where b = "1" or (b = "3")""").get)
+            .flatMap {
+              case Left(result) =>
+                Future {
+                  assert(result.rows.length == 2)
+                  assert(Set(result.value(0, "b"), result.value(1, "b")) == Set("1", "3"))
                 }
               case Right(exception) =>
                 fail(exception)
