@@ -46,14 +46,14 @@ class V0EngineTest extends AsyncFlatSpec {
     val status = new CustomJDBCStatus()
     status.update(List(sampleRecord()))
       .flatMap {
-        case Left(result) =>
+        case Left(_) =>
           status.query(QueryParser.parse("select b, c from a").get)
             .flatMap {
               case Left(result) =>
                 Future {
                   assert(result.columns == List[FieldId]("b", "c"))
                   assert(result.rows.length == 1)
-                  assert(result.meta(0).expires == None)
+                  assert(result.meta(0).expires.isEmpty)
                 }
               case Right(exception) =>
                 fail(exception)
@@ -71,7 +71,7 @@ class V0EngineTest extends AsyncFlatSpec {
     val current = sampleRecordExpires(delta)
     status.update(List(stale, current))
       .flatMap {
-        case Left(result) =>
+        case Left(_) =>
           status.query(QueryParser.parse("select b, c from a").get)
             .flatMap {
               case Left(result) =>
