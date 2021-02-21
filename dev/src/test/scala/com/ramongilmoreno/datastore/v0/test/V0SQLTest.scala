@@ -49,7 +49,7 @@ class V0SQLTest extends AsyncFlatSpec {
   }
 
   it should "be able of doing an insert" in {
-    val u = new NoOperationJDBCStatus().u(Record("a", Map("b" -> FieldData("1"), "c" -> FieldData("2")), new RecordMetadata()))
+    val u = new NoOperationJDBCStatus().u(Record("a", Map("b" -> FieldData("1"), "c" -> FieldData("2")), RecordMetadata()))
     val aTable = tableName("a")
     val bField = fieldValueName("b")
     val cField = fieldValueName("c")
@@ -58,9 +58,8 @@ class V0SQLTest extends AsyncFlatSpec {
   }
 
   it should "be able of doing an update" in {
-    val recordMeta = new RecordMetadata()
     val id = "x"
-    recordMeta.id = Some(id)
+    val recordMeta = RecordMetadata(Some(id))
     val u = new NoOperationJDBCStatus().u(Record("a", Map("b" -> FieldData("1"), "c" -> FieldData("2")), recordMeta))
     val aTable = tableName("a")
     val bField = fieldValueName("b")

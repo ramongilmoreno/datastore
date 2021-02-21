@@ -10,6 +10,11 @@ val akkaVersion = "2.6.4"
 libraryDependencies += "com.typesafe.akka" %% "akka-actor-typed" % akkaVersion
 libraryDependencies += "com.typesafe.akka" %% "akka-actor-testkit-typed" % akkaVersion % Test
 
+// Akka HTTP for JSON objects
+// https://doc.akka.io/docs/akka-http/current/common/json-support.html
+val AkkaHttpVersion = "10.2.3"
+libraryDependencies += "com.typesafe.akka" %% "akka-http-spray-json" % AkkaHttpVersion
+
 // Database support
 libraryDependencies += "com.h2database" % "h2" % "1.4.200"
 

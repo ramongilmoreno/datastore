@@ -14,26 +14,17 @@ object API {
   type Timestamp = Long
   type TransactionId = Id
 
-  abstract class Metadata {
-  }
+  case class RecordMetadata(id: Option[RecordId] = None, expires: Option[Timestamp] = None)
 
-  class RecordMetadata extends Metadata {
-    var id: Option[RecordId] = None
-    var expires: Option[Timestamp] = None
-  }
+  case class FieldMetadata(isInteger: Boolean = false, isDecimal: Boolean = false)
 
-  class FieldMetadata extends Metadata {
-    var isInteger: Boolean = false
-    var isDecimal: Boolean = false
-  }
+  case class FieldData(value: ValueType, meta: FieldMetadata = FieldMetadata())
 
-  case class FieldData(value: ValueType, meta: FieldMetadata = new FieldMetadata())
-
-  case class Record(table: TableId, data: Values[FieldId, FieldData], meta: RecordMetadata = new RecordMetadata()) {}
+  case class Record(table: TableId, data: Values[FieldId, FieldData], meta: RecordMetadata = RecordMetadata()) {}
 
   class Request(val depends: Option[TransactionId]) {}
 
-  class Update(depends: Option[TransactionId], val updates: List[Record]) extends Request(depends) {}
+  class Update(depends: Option[TransactionId], val updates: Seq[Record]) extends Request(depends) {}
 
   class Query(depends: Option[TransactionId], val query: String) extends Request(depends) {}
 

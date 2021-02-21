@@ -33,9 +33,7 @@ object Engine {
           val id: RecordId = rs.getString(recordIdName())
           val o = rs.getLong(recordExpiresName())
           val expires: Option[Timestamp] = if (rs.wasNull()) None else Some(o)
-          val meta = new RecordMetadata()
-          meta.id = Some(id)
-          meta.expires = expires
+          val meta = RecordMetadata(Some(id), expires)
           f((names.map(field => rs.getString(fieldValueName(field))).toArray, meta) :: acc)
         } else {
           acc
@@ -57,6 +55,7 @@ object Engine {
 
   trait JDBCStatus {
 
+    type WorkInProgress = (String, List[Any])
     // Decimal deletes all trailing characters after not a number
     val integerRegex: Regex = "[^0-9].*$".r
     val decimalRegex: Regex = "^[0-9]*[^0-9]".r
@@ -120,30 +119,6 @@ object Engine {
             Future(Right(e))
         }
     }
-    type WorkInProgress = (String, List[Any])
-
-    protected def internalCondition(c: Condition): WorkInProgress = {
-
-      def fov (arg: FieldOrValue, acc: WorkInProgress): WorkInProgress = arg match {
-        case field: Field =>
-          val fname = fieldValueName(field.id)
-          (s"${acc._1}$tableAlias.$fname", acc._2)
-        case value: Value =>
-          (acc._1 + "?", acc._2 :+ value.value)
-      }
-
-      def f (c: Condition, acc: WorkInProgress): WorkInProgress = c match {
-        case two: TwoCondition =>
-          val l = f(two.left, (acc._1 + "(", acc._2))
-          val r = f(two.right, (s"${l._1} ${two.operator} ", l._2))
-          (r._1 + ")", r._2)
-        case single: SingleCondition =>
-          val l = fov(single.left, (acc._1 + "(", acc._2))
-          val r = fov(single.right, (s"${l._1} ${single.operator} ", l._2))
-          (r._1 + ")", r._2)
-      }
-      f(c, ("", List.empty))
-    }
 
     protected def internalSQL(q: Query)(implicit ec: ExecutionContext): Future[Either[WorkInProgress, Exception]] = {
       columnsExists(q.table, q.fields.toSet).flatMap {
@@ -162,6 +137,30 @@ object Engine {
           Future(Left((s"select $tableAlias.$queryIdName, $tableAlias.$queryExpiresName, $f from $queryTableName as $tableAlias where ($tableAlias.$queryExpiresName is null or $tableAlias.$queryExpiresName >= ?)${c._1}", now() +: c._2)))
         case Right(e) => Future(Right(new IllegalStateException(s"Failed to check that columns exist [$q]", e)))
       }
+    }
+
+    protected def internalCondition(c: Condition): WorkInProgress = {
+
+      def fov(arg: FieldOrValue, acc: WorkInProgress): WorkInProgress = arg match {
+        case field: Field =>
+          val fname = fieldValueName(field.id)
+          (s"${acc._1}$tableAlias.$fname", acc._2)
+        case value: Value =>
+          (acc._1 + "?", acc._2 :+ value.value)
+      }
+
+      def f(c: Condition, acc: WorkInProgress): WorkInProgress = c match {
+        case two: TwoCondition =>
+          val l = f(two.left, (acc._1 + "(", acc._2))
+          val r = f(two.right, (s"${l._1} ${two.operator} ", l._2))
+          (r._1 + ")", r._2)
+        case single: SingleCondition =>
+          val l = fov(single.left, (acc._1 + "(", acc._2))
+          val r = fov(single.right, (s"${l._1} ${single.operator} ", l._2))
+          (r._1 + ")", r._2)
+      }
+
+      f(c, ("", List.empty))
     }
 
     def update(records: List[Record])(implicit ec: ExecutionContext): Future[Either[List[RecordId], Exception]] = {

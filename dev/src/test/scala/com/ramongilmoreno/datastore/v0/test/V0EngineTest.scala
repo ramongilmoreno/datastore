@@ -15,8 +15,7 @@ class V0EngineTest extends AsyncFlatSpec {
     sampleRecord(Some(System.currentTimeMillis() + delta))
 
   def sampleRecord(expires: Option[Timestamp] = None): Record = {
-    val meta = new RecordMetadata()
-    meta.expires = expires
+    val meta = new RecordMetadata(None, expires)
     Record("a", Map("b" -> FieldData("1"), "c" -> FieldData("2")), meta)
   }
 
