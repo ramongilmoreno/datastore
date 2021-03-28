@@ -90,8 +90,11 @@ object QueryParser extends RegexParsers {
 
   abstract class TwoCondition extends Condition {
     def left: Condition
+
     def right: Condition
+
     def operator: String
+
     def text(alias: String): String = s"($left $operator $right)"
   }
 

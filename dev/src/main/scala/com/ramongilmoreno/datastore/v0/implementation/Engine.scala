@@ -7,23 +7,36 @@ import java.sql.{Connection, DriverManager, ResultSet}
 import java.util.{Locale, UUID}
 import scala.annotation.tailrec
 import scala.concurrent.{ExecutionContext, Future}
+import scala.language.implicitConversions
 import scala.util.matching.Regex
 
+class FlatMapRight[A](obj: Future[Either[Throwable, A]]) {
+  def flatMapRight[B](f: A => Future[Either[Throwable, B]])(implicit ec: ExecutionContext): Future[Either[Throwable, B]] =
+    obj.flatMap {
+      case Left(e) => Future(Left(new Throwable(e)))
+      case Right(a) => f(a)
+    }
+}
+
 object Engine {
+
+  implicit def flatMapRightWrapper[A](obj: Future[Either[Throwable, A]]): FlatMapRight[A] = new FlatMapRight[A](obj)
 
   val tableAlias: TableId = "t"
 
   def fieldMetaIntName(field: String): FieldId = fieldMetaName(field, "int")
 
-  def fieldMetaDecimalName(field: String): FieldId = fieldMetaName(field, "decimal")
-
   private def fieldMetaName(field: String, suffix: String): FieldId = name(field, "meta", suffix)
+
+  private def name(field: String, prefix: String, suffix: String): Id = s"${prefix}_${field}_$suffix".toUpperCase(Locale.US)
+
+  def fieldMetaDecimalName(field: String): FieldId = fieldMetaName(field, "decimal")
 
   def tableName(table: TableId): String = s"table_$table".toUpperCase(Locale.US)
 
   def now(): Long = System.currentTimeMillis()
 
-  def result(rs: ResultSet, names: List[FieldId]): Either[Exception, Result] =
+  def result(rs: ResultSet, names: List[FieldId]): Either[Throwable, Result] =
     try {
       @scala.annotation.tailrec
       def f(acc: List[(Array[ValueType], RecordMetadata)]): List[(Array[ValueType], RecordMetadata)] = {
@@ -40,7 +53,7 @@ object Engine {
 
       Right(Result(names, f(List()).reverse.toArray))
     } catch {
-      case e: Exception => Left(e)
+      case e: Throwable => Left(e)
     }
 
   def recordIdName(): FieldId = recordName("id")
@@ -50,8 +63,6 @@ object Engine {
   private def recordName(field: String): FieldId = s"record_$field".toUpperCase(Locale.US)
 
   def fieldValueName(field: String): FieldId = name(field, "field", "value")
-
-  private def name(field: String, prefix: String, suffix: String): Id = s"${prefix}_${field}_$suffix".toUpperCase(Locale.US)
 
   trait JDBCStatus {
 
@@ -68,82 +79,71 @@ object Engine {
     /**
      * Tells whether the given table exists
      */
-    def tableExists(table: TableId)(implicit ec: ExecutionContext): Future[Either[Exception, Boolean]]
+    def tableExists(table: TableId)(implicit ec: ExecutionContext): Future[Either[Throwable, Boolean]]
 
     /**
      * Tells existing columns in the table
      */
-    def columnsExists(table: TableId, columns: Set[FieldId])(implicit ec: ExecutionContext): Future[Either[Exception, Set[(FieldId, Boolean)]]]
+    def columnsExists(table: TableId, columns: Set[FieldId])(implicit ec: ExecutionContext): Future[Either[Throwable, Set[(FieldId, Boolean)]]]
 
     /**
      * Ensure table exists
      */
-    def makeTableExist(table: TableId)(implicit ec: ExecutionContext): Future[Either[Exception, Unit]]
+    def makeTableExist(table: TableId)(implicit ec: ExecutionContext): Future[Either[Throwable, Unit]]
 
     /**
      * Ensure columns exists
      */
-    def makeColumnsExist(table: TableId, columns: Set[FieldId])(implicit ec: ExecutionContext): Future[Either[Exception, Unit]]
+    def makeColumnsExist(table: TableId, columns: Set[FieldId])(implicit ec: ExecutionContext): Future[Either[Throwable, Unit]]
 
     /**
      * Convenience method to parse a query
      */
-    def query(q: CharSequence)(implicit ec: ExecutionContext): Future[Either[Exception, Result]] =
+    def query(q: CharSequence)(implicit ec: ExecutionContext): Future[Either[Throwable, Result]] =
       query(QueryParser.parse(q).get)(ec)
 
     /**
      * Query action
      */
-    def query(q: Query)(implicit ec: ExecutionContext): Future[Either[Exception, Result]] = {
-      tableExists(q.table)
-        .flatMap {
-          case Right(false) =>
-            // Empty result if table does not exist
-            Future(Right(Result(q.fields, Array.empty)))
-          case Right(true) =>
-            // Run query
-            internalSQL(q)
-              .flatMap {
-                case Right(query) => Future {
-                  try {
-                    val ps = connection.prepareStatement(query._1)
-                    try {
-                      val args = query._2
-                      (1 to args.length).zip(args).foreach(f => ps.setObject(f._1, f._2))
-                      result(ps.executeQuery(), q.fields)
-                    } finally {
-                      ps.close()
-                    }
-                  } catch {
-                    case e: Exception => Left(e)
-                  }
+    def query(q: Query)(implicit ec: ExecutionContext): Future[Either[Throwable, Result]] = tableExists(q.table)
+      .flatMapRight {
+        case false =>
+          // Empty result if table does not exist
+          Future(Right(Result(q.fields, Array.empty)))
+        case true =>
+          // Run query
+          internalSQL(q)
+            .flatMapRight(query => Future {
+              try {
+                val ps = connection.prepareStatement(query._1)
+                try {
+                  val args = query._2
+                  (1 to args.length).zip(args).foreach(f => ps.setObject(f._1, f._2))
+                  result(ps.executeQuery(), q.fields)
+                } finally {
+                  ps.close()
                 }
-                case Left(e) => Future(Left(e))
+              } catch {
+                case e: Throwable => Left(e)
               }
-          case Left(e) =>
-            // Exception thrown...
-            Future(Left(e))
-        }
-    }
-
-    protected def internalSQL(q: Query)(implicit ec: ExecutionContext): Future[Either[Exception, WorkInProgress]] = {
-      columnsExists(q.table, q.fields.toSet).flatMap {
-        case Right(fields) =>
-          // Prepare query
-          val f: String = fields.map(t => if (t._2) s"$tableAlias.${fieldValueName(t._1)}" else "\"\" as %s".format(fieldValueName(t._1))).mkString(", ")
-          val c = q.condition match {
-            case Some(c) =>
-              val r = internalCondition(c)
-              (s" and ${r._1}", r._2)
-            case None => ("", List.empty)
-          }
-          val queryTableName = tableName(q.table)
-          val queryIdName = recordIdName()
-          val queryExpiresName = recordExpiresName()
-          Future(Right((s"select $tableAlias.$queryIdName, $tableAlias.$queryExpiresName, $f from $queryTableName as $tableAlias where ($tableAlias.$queryExpiresName is null or $tableAlias.$queryExpiresName >= ?)${c._1}", now() +: c._2)))
-        case Left(e) => Future(Left(new IllegalStateException(s"Failed to check that columns exist [$q]", e)))
+            })
       }
-    }
+
+    protected def internalSQL(q: Query)(implicit ec: ExecutionContext): Future[Either[Throwable, WorkInProgress]] = columnsExists(q.table, q.fields.toSet)
+      .flatMapRight(fields => {
+        // Prepare query
+        val f: String = fields.map(t => if (t._2) s"$tableAlias.${fieldValueName(t._1)}" else "\"\" as %s".format(fieldValueName(t._1))).mkString(", ")
+        val c = q.condition match {
+          case Some(c) =>
+            val r = internalCondition(c)
+            (s" and ${r._1}", r._2)
+          case None => ("", List.empty)
+        }
+        val queryTableName = tableName(q.table)
+        val queryIdName = recordIdName()
+        val queryExpiresName = recordExpiresName()
+        Future(Right((s"select $tableAlias.$queryIdName, $tableAlias.$queryExpiresName, $f from $queryTableName as $tableAlias where ($tableAlias.$queryExpiresName is null or $tableAlias.$queryExpiresName >= ?)${c._1}", now() +: c._2)))
+      })
 
     protected def internalCondition(c: Condition): WorkInProgress = {
 
@@ -169,36 +169,30 @@ object Engine {
       f(c, ("", List.empty))
     }
 
-    def update(records: Seq[Record])(implicit ec: ExecutionContext): Future[Either[Exception, List[RecordId]]] =
+    def update(records: Seq[Record])(implicit ec: ExecutionContext): Future[Either[Throwable, List[RecordId]]] =
       update(records.toList)
 
-    def update(records: List[Record])(implicit ec: ExecutionContext): Future[Either[Exception, List[RecordId]]] = {
-      def exhaust(remaining: List[Record], acc: List[RecordId]): Future[Either[Exception, List[RecordId]]] = remaining match {
+    def update(records: List[Record])(implicit ec: ExecutionContext): Future[Either[Throwable, List[RecordId]]] = {
+      def exhaust(remaining: List[Record], acc: List[RecordId]): Future[Either[Throwable, List[RecordId]]] = remaining match {
         case Nil => Future(Right(acc))
         case r :: rest =>
           val u = internalUpdate(r)
           makeTableExist(r.table)
-            .flatMap {
-              case Right(_) => makeColumnsExist(r.table, r.data.keySet)
-              case Left(exception) => Future(Left(new IllegalStateException(s"Unable to make table exists [$u]", exception)))
-            }
-            .flatMap {
-              case Right(_) =>
+            .flatMapRight(_ => makeColumnsExist(r.table, r.data.keySet))
+            .flatMapRight(_ => {
+              try {
+                val ps = connection.prepareStatement(u._2)
                 try {
-                  val ps = connection.prepareStatement(u._2)
-                  try {
-                    (1 to u._3.length).zip(u._3).foreach(x => ps.setObject(x._1, x._2))
-                    ps.execute()
-                    exhaust(rest, u._1 :: acc)
-                  } finally {
-                    ps.close()
-                  }
-                } catch {
-                  case e: Exception => Future(Left(new IllegalStateException(s"Failed to update[$u]", e)))
+                  (1 to u._3.length).zip(u._3).foreach(x => ps.setObject(x._1, x._2))
+                  ps.execute()
+                  exhaust(rest, u._1 :: acc)
+                } finally {
+                  ps.close()
                 }
-              case Left(exception) => Future(Left(new IllegalStateException(s"Unable to make columns exists [$u]", exception)))
-            }
-
+              } catch {
+                case e: Throwable => Future(Left(new IllegalStateException(s"Failed to update[$u]", e)))
+              }
+            })
       }
 
       exhaust(records, Nil)
@@ -240,51 +234,44 @@ object Engine {
 
     def decimal(value: ValueType): Int = decimalRegex.replaceFirstIn(value, "").toInt
 
-    def makeRecordExists(id: Id, table: TableId)(implicit ec: ExecutionContext): Future[Either[Throwable, Unit]] = {
-      makeTableExist(table)
-        .flatMap {
-          case Left(e) => Future(Left(e))
-          case Right(_) => Future {
-            val ps = connection.prepareStatement("select count(*) from " + tableName(table))
+    def makeRecordExists(id: Id, table: TableId)(implicit ec: ExecutionContext): Future[Either[Throwable, Unit]] = makeTableExist(table)
+      .flatMapRight(_ => Future {
+        val ps = connection.prepareStatement("select count(*) from " + tableName(table))
+        try {
+          val rs = ps.executeQuery()
+          rs.next()
+          Right(rs.getInt(1))
+        } catch {
+          case t: Throwable => Left(t)
+        } finally {
+          ps.close()
+        }
+      })
+      .flatMapRight(count => {
+        if (count > 0) {
+          // Record exists, nothing to be done
+          Future(Right())
+        } else {
+          // Record does not exist, insert it
+          Future {
+            val queryTableName = tableName(table)
+            val idFieldName = recordIdName()
+            val q = s"insert into $queryTableName ($idFieldName) values (?)"
             try {
-              val rs = ps.executeQuery()
-              rs.next()
-              Right(rs.getInt(1))
+              val ps = connection.prepareStatement(q)
+              try {
+                ps.setObject(1, id)
+                ps.execute()
+                Right()
+              } finally {
+                ps.close()
+              }
             } catch {
-              case t: Throwable => Left(t)
-            } finally {
-              ps.close()
+              case e: Throwable => Left[Throwable, Unit](new IllegalStateException(s"Insert threw an exception: [$q] for id [$id]", e))
             }
           }
         }
-        .flatMap {
-          case Left(t) => Future(Left(t))
-          case Right(count) =>
-            if (count > 0) {
-              // Record exists, nothing to be done
-              Future(Right())
-            } else {
-              // Record does not exist, insert it
-              Future {
-                val queryTableName = tableName(table)
-                val idFieldName = recordIdName()
-                val q = s"insert into $queryTableName ($idFieldName) values (?)"
-                try {
-                  val ps = connection.prepareStatement(q)
-                  try {
-                    ps.setObject(1, id)
-                    ps.execute()
-                    Right()
-                  } finally {
-                    ps.close()
-                  }
-                } catch {
-                  case e: Exception => Left[Throwable, Unit](new IllegalStateException(s"Insert threw an exception: [$q] for id [$id]", e))
-                }
-              }
-            }
-        }
-    }
+      })
 
   }
 
@@ -296,51 +283,49 @@ object Engine {
     /**
      * Ensure columns exists
      */
-    override def makeColumnsExist(table: TableId, columns: Set[FieldId])(implicit ec: ExecutionContext): Future[Either[Exception, Unit]] =
+    override def makeColumnsExist(table: TableId, columns: Set[FieldId])(implicit ec: ExecutionContext): Future[Either[Throwable, Unit]] =
       columnsExists(table, columns)
-        .flatMap {
-          case Right(c) =>
-            val missing: Set[FieldId] = c.filterNot(_._2).map(_._1)
-            if (missing.nonEmpty) {
-              val columns: List[(FieldId, String)] = missing.toList.flatMap(field => List(
-                (fieldValueName(field), basicType),
-                (fieldMetaIntName(field), basicNumberType),
-                (fieldMetaDecimalName(field), basicNumberType)
-              ))
+        .flatMapRight(c => {
+          val missing: Set[FieldId] = c.filterNot(_._2).map(_._1)
+          if (missing.nonEmpty) {
+            val columns: List[(FieldId, String)] = missing.toList.flatMap(field => List(
+              (fieldValueName(field), basicType),
+              (fieldMetaIntName(field), basicNumberType),
+              (fieldMetaDecimalName(field), basicNumberType)
+            ))
 
-              def exhaust(pending: List[(FieldId, String)]): Either[Exception, Unit] = pending match {
-                case Nil => Right()
-                case column :: rest =>
-                  val queryTableName = tableName(table)
-                  val queryColumnName = column._1
-                  val queryType = column._2
-                  val q = s"alter table $queryTableName add column $queryColumnName $queryType"
+            def exhaust(pending: List[(FieldId, String)]): Either[Throwable, Unit] = pending match {
+              case Nil => Right()
+              case column :: rest =>
+                val queryTableName = tableName(table)
+                val queryColumnName = column._1
+                val queryType = column._2
+                val q = s"alter table $queryTableName add column $queryColumnName $queryType"
+                try {
+                  val ps = connection.prepareStatement(q)
                   try {
-                    val ps = connection.prepareStatement(q)
-                    try {
-                      ps.execute()
-                      exhaust(rest)
-                    } finally {
-                      ps.close()
-                    }
-                  } catch {
-                    case e: Exception => Left(new IllegalStateException(s"Failed to add column [${column._1}] to table [$table]", e))
+                    ps.execute()
+                    exhaust(rest)
+                  } finally {
+                    ps.close()
                   }
-              }
-
-              Future {
-                exhaust(columns)
-              }
-            } else {
-              Future(Right())
+                } catch {
+                  case e: Throwable => Left(new IllegalStateException(s"Failed to add column [${column._1}] to table [$table]", e))
+                }
             }
-          case Left(e) => Future(Left(new IllegalStateException(s"Failed to check if columns exists in table [$table], columns [$columns]", e)))
-        }
+
+            Future {
+              exhaust(columns)
+            }
+          } else {
+            Future(Right())
+          }
+        })
 
     /**
      * Tells existing columns in the table
      */
-    override def columnsExists(table: TableId, columns: Set[FieldId])(implicit ec: ExecutionContext): Future[Either[Exception, Set[(FieldId, Boolean)]]] =
+    override def columnsExists(table: TableId, columns: Set[FieldId])(implicit ec: ExecutionContext): Future[Either[Throwable, Set[(FieldId, Boolean)]]] =
       Future {
         try {
           // http://h2-database.66688.n3.nabble.com/Best-practice-Test-for-existence-of-table-etc-td4024451.html
@@ -363,44 +348,43 @@ object Engine {
             ps.close()
           }
         } catch {
-          case e: Exception => Left(new IllegalStateException(s"Failed to check table [$table] columns [$columns]", e))
+          case e: Throwable => Left(new IllegalStateException(s"Failed to check table [$table] columns [$columns]", e))
         }
       }
 
     /**
      * Ensure table exists
      */
-    override def makeTableExist(table: TableId)(implicit ec: ExecutionContext): Future[Either[Exception, Unit]] =
-      tableExists(table).flatMap({
-        case Right(true) =>
-          // Do nothing
-          Future(Right())
-        case Right(false) =>
-          // Create table
-          Future {
-            try {
-              val queryTableName = tableName(table)
-              val queryIdFieldName = recordIdName()
-              val queryExpiresFieldName = recordExpiresName()
-              val q = s"create table $queryTableName ($queryIdFieldName $basicType PRIMARY KEY, $queryExpiresFieldName $basicNumberType)"
-              val ps = connection.prepareStatement(q)
+    override def makeTableExist(table: TableId)(implicit ec: ExecutionContext): Future[Either[Throwable, Unit]] =
+      tableExists(table)
+        .flatMapRight(exists => {
+          if (exists) {
+            Future(Right())
+          } else {
+            Future {
               try {
-                ps.execute()
-                Right()
-              } finally {
-                ps.close()
+                val queryTableName = tableName(table)
+                val queryIdFieldName = recordIdName()
+                val queryExpiresFieldName = recordExpiresName()
+                val q = s"create table $queryTableName ($queryIdFieldName $basicType PRIMARY KEY, $queryExpiresFieldName $basicNumberType)"
+                val ps = connection.prepareStatement(q)
+                try {
+                  ps.execute()
+                  Right()
+                } finally {
+                  ps.close()
+                }
+              } catch {
+                case e: Throwable => Left(new IllegalStateException(s"Could not create table [$table]", e))
               }
-            } catch {
-              case e: Exception => Left(new IllegalStateException(s"Could not create table [$table]", e))
             }
           }
-        case Left(e) => Future(Left(new IllegalStateException(s"Failed to check if table exists [$table]", e)))
-      })
+        })
 
     /**
      * Tells whether the given table exists
      */
-    override def tableExists(table: TableId)(implicit ec: ExecutionContext): Future[Either[Exception, Boolean]] =
+    override def tableExists(table: TableId)(implicit ec: ExecutionContext): Future[Either[Throwable, Boolean]] =
       Future {
         try {
           // http://h2-database.66688.n3.nabble.com/Best-practice-Test-for-existence-of-table-etc-td4024451.html
@@ -414,7 +398,7 @@ object Engine {
             ps.close()
           }
         } catch {
-          case e: Exception => Left(e)
+          case e: Throwable => Left(e)
         }
       }
   }

@@ -1,11 +1,11 @@
 package com.ramongilmoreno.datastore.v0.test
 
 import com.ramongilmoreno.datastore.v0.API._
+import com.ramongilmoreno.datastore.v0.implementation.Engine.flatMapRightWrapper
 import com.ramongilmoreno.datastore.v0.implementation.{EngineManager, QueryParser}
 import org.scalatest._
 
 import java.nio.file.Path
-import scala.concurrent.Future
 
 class EngineManagerTest extends AsyncFlatSpec {
 
@@ -25,30 +25,15 @@ class EngineManagerTest extends AsyncFlatSpec {
 
   "Engine manager" should "be able of doing an insert and recover status" in {
     EngineManager.createManager(path)
-      .flatMap {
-        case Left(e) => Future(Left(e))
-        case Right(manager) => {
-          manager
-            .update(List(sampleRecordData("1", "2")))
-        }
-      }
-      .flatMap {
-        case Left(e) => Future(Left(e))
-        case Right(_) => EngineManager.createManager(path)
-      }
-      .flatMap {
-        case Left(e) => Future(Left(e))
-        case Right(manager) => {
-          /* Newly created manager */ manager.query(QueryParser.parse("select b, c from a").get)
-        }
-      }
+      .flatMapRight(manager => manager.update(List(sampleRecordData("1", "2"))))
+      .flatMapRight(_ => EngineManager.createManager(path))
+      .flatMapRight(manager => /* Newly created manager */ manager.query(QueryParser.parse("select b, c from a").get))
       .flatMap {
         case Left(e) => fail(e)
-        case Right(result) => {
+        case Right(result) =>
           assert(result.rows.length == 1)
           assert(result.value(0, "b") == "1")
           assert(result.value(0, "c") == "2")
-        }
       }
   }
 }

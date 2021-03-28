@@ -1,7 +1,7 @@
 package com.ramongilmoreno.datastore.v0.implementation
 
 import com.ramongilmoreno.datastore.v0.API.{Record, RecordId, RecordMetadata}
-import com.ramongilmoreno.datastore.v0.implementation.Engine.{InMemoryH2Status, Result}
+import com.ramongilmoreno.datastore.v0.implementation.Engine.{InMemoryH2Status, Result, flatMapRightWrapper}
 import com.ramongilmoreno.datastore.v0.implementation.EngineManager.extension
 import com.ramongilmoreno.datastore.v0.implementation.QueryParser.Query
 
@@ -21,10 +21,7 @@ object EngineManager {
 
   def createManager(dir: Path)(implicit ec: ExecutionContext): Future[Either[Throwable, EngineManager]] = {
     val em = new EngineManager(dir)
-    em.init().flatMap {
-      case Left(e) => Future(Left(e))
-      case Right(_) => Future(Right(em))
-    }
+    em.init().flatMapRight(_ => Future(Right(em)))
   }
 }
 
@@ -103,10 +100,7 @@ class EngineManager(dir: Path) {
           } else {
             val record = items.head
             status.makeRecordExists(record.meta.id.get, record.table)
-              .flatMap {
-                case Left(e) => Future(Left[Throwable, Unit](e))
-                case _ => exhaust2(items.tail)
-              }
+              .flatMapRight(_ => exhaust2(items.tail))
           }
         }
 
@@ -118,19 +112,11 @@ class EngineManager(dir: Path) {
             Future {
               APIManager.loadRecords(items.head)
             }
-              .flatMap {
-                case Left(e) => Future(Left(e))
-                case Right(records) =>
-                  exhaust2(records)
-                    .flatMap {
-                      case Left(e2) => Future(Left(e2))
-                      case Right(_) => status.update(records)
-                    }
-              }
-              .flatMap {
-                case Left(e) => Future(Left(e))
-                case Right(_) => exhaust(items.tail)
-              }
+              .flatMapRight(records => {
+                exhaust2(records)
+                  .flatMapRight(_ => status.update(records))
+              })
+              .flatMapRight(_ => exhaust(items.tail))
           }
         }
 
@@ -140,21 +126,17 @@ class EngineManager(dir: Path) {
   def query(q: Query)(implicit ec: ExecutionContext): Future[Either[Throwable, Result]] = status.query(q)
 
   def update(records: List[Record])(implicit ec: ExecutionContext): Future[Either[Throwable, List[RecordId]]] = {
-    status.update(records).flatMap {
-      case Right(ids) =>
-        location().flatMap {
-          case Right(path) =>
+    status.update(records)
+      .flatMapRight(ids => {
+        location()
+          .flatMapRight(path => {
             val z: Seq[Record] = records.zip(ids).map(i => {
               val (record, id) = i
               Record(record.table, record.data, RecordMetadata(Some(id), record.meta.expires))
             })
-            APIManager.saveRecords(z, path).flatMap { _ =>
-              Future(Right(ids))
-            }
-          case Left(e) => Future(Left(new IllegalStateException("Could not obtain a free location to save records", e)))
-        }
-      case Left(e) => Future(Left(e))
-    }
+            APIManager.saveRecords(z, path).flatMap(_ => Future(Right(ids)))
+          })
+      })
   }
 
   /**

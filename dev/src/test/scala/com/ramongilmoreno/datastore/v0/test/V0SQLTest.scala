@@ -13,21 +13,21 @@ class V0SQLTest extends AsyncFlatSpec {
 
   class NoOperationJDBCStatus extends JDBCStatus {
 
-    def q(query: Query): Future[Either[Exception, (String, List[Any])]] = internalSQL(query)
+    def q(query: Query): Future[Either[Throwable, (String, List[Any])]] = internalSQL(query)
 
     def u(record: Record): (RecordId, String, Seq[Any]) = internalUpdate(record)
 
-    override def tableExists(table: TableId)(implicit ec: ExecutionContext): Future[Either[Exception, Boolean]] = Future(Right(true))(ec)
+    override def tableExists(table: TableId)(implicit ec: ExecutionContext): Future[Either[Throwable, Boolean]] = Future(Right(true))(ec)
 
-    override def columnsExists(table: TableId, columns: Set[FieldId])(implicit ec: ExecutionContext): Future[Either[Exception, Set[(FieldId, Boolean)]]] = Future {
+    override def columnsExists(table: TableId, columns: Set[FieldId])(implicit ec: ExecutionContext): Future[Either[Throwable, Set[(FieldId, Boolean)]]] = Future {
       Right(columns.map((_, true)))
     }(ec)
 
-    override def makeColumnsExist(table: TableId, columns: Set[FieldId])(implicit ec: ExecutionContext): Future[Either[Exception, Unit]] = throw new UnsupportedOperationException
+    override def makeColumnsExist(table: TableId, columns: Set[FieldId])(implicit ec: ExecutionContext): Future[Either[Throwable, Unit]] = throw new UnsupportedOperationException
 
     override def connection: Connection = throw new UnsupportedOperationException
 
-    override def makeTableExist(table: TableId)(implicit ec: ExecutionContext): Future[Either[Exception, Unit]] = throw new UnsupportedOperationException
+    override def makeTableExist(table: TableId)(implicit ec: ExecutionContext): Future[Either[Throwable, Unit]] = throw new UnsupportedOperationException
   }
 
   "Engine" should "get simple SQL for a query without conditions" in {
