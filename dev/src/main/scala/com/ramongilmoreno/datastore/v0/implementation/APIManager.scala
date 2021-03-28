@@ -5,6 +5,7 @@ import spray.json.{JsArray, JsBoolean, JsObject, JsString, JsValue, JsonParser}
 
 import java.io.{InputStream, OutputStream, OutputStreamWriter}
 import java.nio.charset.StandardCharsets
+import java.nio.file.{Files, Path}
 import scala.concurrent.{ExecutionContext, Future}
 import scala.io.Codec
 
@@ -22,10 +23,23 @@ object APIManager {
   val ID_FIELD = "id"
   val EXPIRES_FIELD = "expires"
 
-  def loadRecords(input: InputStream)(implicit ec: ExecutionContext): Future[Seq[Record]] = Future {
-    val string = scala.io.Source.fromInputStream(input)(Codec.UTF8).mkString
-    JsonParser(string).asInstanceOf[JsArray].elements.map(x => loadRecord(x.asInstanceOf[JsObject]))
-  }
+  def loadRecords(input: Path)(implicit ec: ExecutionContext): Either[Throwable, Seq[Record]] =
+    try {
+      val is = Files.newInputStream(input)
+      val r = loadRecords(is)
+      is.close()
+      r
+    } catch {
+      case e: Throwable => Left(e)
+    }
+
+  def loadRecords(input: InputStream)(implicit ec: ExecutionContext): Either[Throwable, Seq[Record]] =
+    try {
+      val string = scala.io.Source.fromInputStream(input)(Codec.UTF8).mkString
+      Right(JsonParser(string).asInstanceOf[JsArray].elements.map(x => loadRecord(x.asInstanceOf[JsObject])))
+    } catch {
+      case e: Throwable => Left(e)
+    }
 
   def loadRecord(input: JsObject): Record = {
     val fields = input.fields
@@ -55,6 +69,16 @@ object APIManager {
     val expires: Option[Timestamp] = fields.get(EXPIRES_FIELD).map(_.asInstanceOf[JsString]).map(_.value).map(_.toLong)
     RecordMetadata(id, expires)
   }
+
+  def saveRecords(input: Seq[Record], output: Path)(implicit ec: ExecutionContext): Future[Unit] =
+    Future {
+      Files.newOutputStream(output)
+    }
+      .flatMap(os => {
+        saveRecords(input, os).flatMap(_ => Future {
+          os.close()
+        })
+      })
 
   def saveRecords(input: Seq[Record], output: OutputStream)(implicit ec: ExecutionContext): Future[Unit] = Future {
     val js = new JsArray(input.map(saveRecord).toVector)

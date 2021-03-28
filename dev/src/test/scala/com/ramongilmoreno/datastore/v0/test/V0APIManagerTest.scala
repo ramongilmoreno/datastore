@@ -34,8 +34,12 @@ class V0APIManagerTest extends AsyncFlatSpec {
     APIManager.saveRecords(original, baos)
       .flatMap(_ => {
         baos.flush()
-        APIManager.loadRecords(new ByteArrayInputStream(baos.toByteArray))
+        Future {
+          APIManager.loadRecords(new ByteArrayInputStream(baos.toByteArray)) match {
+            case Left(e: Throwable) => fail(e)
+            case Right(read) => assert(original == read)
+          }
+        }
       })
-      .flatMap(read => Future(assert(original == read)))
   }
 }

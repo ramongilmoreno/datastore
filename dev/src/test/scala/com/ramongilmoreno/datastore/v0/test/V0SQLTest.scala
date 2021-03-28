@@ -13,21 +13,21 @@ class V0SQLTest extends AsyncFlatSpec {
 
   class NoOperationJDBCStatus extends JDBCStatus {
 
-    def q(query: Query): Future[Either[(String, List[Any]), Exception]] = internalSQL(query)
+    def q(query: Query): Future[Either[Exception, (String, List[Any])]] = internalSQL(query)
 
     def u(record: Record): (RecordId, String, Seq[Any]) = internalUpdate(record)
 
-    override def tableExists(table: TableId)(implicit ec: ExecutionContext): Future[Either[Boolean, Exception]] = Future(Left(true))(ec)
+    override def tableExists(table: TableId)(implicit ec: ExecutionContext): Future[Either[Exception, Boolean]] = Future(Right(true))(ec)
 
-    override def columnsExists(table: TableId, columns: Set[FieldId])(implicit ec: ExecutionContext): Future[Either[Set[(FieldId, Boolean)], Exception]] = Future {
-      Left(columns.map((_, true)))
+    override def columnsExists(table: TableId, columns: Set[FieldId])(implicit ec: ExecutionContext): Future[Either[Exception, Set[(FieldId, Boolean)]]] = Future {
+      Right(columns.map((_, true)))
     }(ec)
 
-    override def makeColumnsExist(table: TableId, columns: Set[FieldId])(implicit ec: ExecutionContext): Future[Either[Unit, Exception]] = throw new UnsupportedOperationException
+    override def makeColumnsExist(table: TableId, columns: Set[FieldId])(implicit ec: ExecutionContext): Future[Either[Exception, Unit]] = throw new UnsupportedOperationException
 
     override def connection: Connection = throw new UnsupportedOperationException
 
-    override def makeTableExist(table: TableId)(implicit ec: ExecutionContext): Future[Either[Unit, Exception]] = throw new UnsupportedOperationException
+    override def makeTableExist(table: TableId)(implicit ec: ExecutionContext): Future[Either[Exception, Unit]] = throw new UnsupportedOperationException
   }
 
   "Engine" should "get simple SQL for a query without conditions" in {
@@ -41,10 +41,10 @@ class V0SQLTest extends AsyncFlatSpec {
     val idField = recordIdName()
     val expiresField = recordExpiresName()
     result.flatMap {
-      case Left(q) => Future {
+      case Right(q) => Future {
         assert(q._1 == s"select $alias.$idField, $alias.$expiresField, $alias.$aField, $alias.$bField from $cTable as $alias where ($alias.$expiresField is null or $alias.$expiresField >= ?)")
       }
-      case Right(exception) => throw exception
+      case Left(exception) => throw exception
     }
   }
 
