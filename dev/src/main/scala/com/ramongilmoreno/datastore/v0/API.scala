@@ -14,7 +14,7 @@ object API {
   type Timestamp = Long
   type TransactionId = Id
 
-  case class RecordMetadata(id: Option[RecordId] = None, expires: Option[Timestamp] = None)
+  case class RecordMetadata(id: Option[RecordId] = None, expires: Option[Timestamp] = None, active: Boolean = true)
 
   case class FieldMetadata(isInteger: Boolean = false, isDecimal: Boolean = false)
 
