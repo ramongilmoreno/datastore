@@ -60,15 +60,9 @@ object Engine {
 
   def recordExpiresName(): FieldId = recordName("expires")
 
-  def fieldValueName(field: String): FieldId = name(field, "field", "value")
-
-  def recordActiveName(): FieldId = recordName("active")
-
   private def recordName(field: String): FieldId = s"record_$field".toUpperCase(Locale.US)
 
-  def recordActiveValueTrue: Int = 1
-
-  def recordActiveValueFalse: Int = 0
+  def fieldValueName(field: String): FieldId = name(field, "field", "value")
 
   trait JDBCStatus {
 
@@ -217,20 +211,19 @@ object Engine {
       val meta: Seq[(FieldId, Any)] = Seq(record.meta.expires).flatten.map((recordExpiresName(), _))
       val all = values ++ meta
       val id: (FieldId, RecordId) = (recordIdName(), record.meta.id.getOrElse(UUID.randomUUID().toString))
-      val active: (FieldId, Int) = (recordActiveName(), if (record.meta.active) recordActiveValueTrue else recordActiveValueFalse)
-      val allAndMeta = (all :+ active) :+ id
+      val allAndId = all :+ id
       val queryTableName = tableName(record.table)
       val q: (String, Seq[Any]) = record.meta.id match {
         case None =>
           // Insert
-          val columns = allAndMeta.map(_._1).mkString(", ")
-          val placeHolders = allAndMeta.map(_ => "?").mkString(", ")
-          (s"insert into $queryTableName ($columns) values ($placeHolders)", allAndMeta.map(_._2))
+          val columns = allAndId.map(_._1).mkString(", ")
+          val placeHolders = allAndId.map(_ => "?").mkString(", ")
+          (s"insert into $queryTableName ($columns) values ($placeHolders)", allAndId.map(_._2))
         case Some(_) =>
           // Update
-          val placeHolders = (all :+ active).map(f => s"${f._1} = ?").mkString(", ")
+          val placeHolders = all.map(f => s"${f._1} = ?").mkString(", ")
           val queryIdField = recordIdName()
-          (s"update $queryTableName set $placeHolders where $queryIdField = ?", allAndMeta.map(_._2))
+          (s"update $queryTableName set $placeHolders where $queryIdField = ?", allAndId.map(_._2))
       }
 
       // Completed; return statement and arguments list
@@ -373,8 +366,7 @@ object Engine {
                 val queryTableName = tableName(table)
                 val queryIdFieldName = recordIdName()
                 val queryExpiresFieldName = recordExpiresName()
-                val queryActiveFieldName = recordActiveName()
-                val q = s"create table $queryTableName ($queryIdFieldName $basicType PRIMARY KEY, $queryExpiresFieldName $basicNumberType, $queryActiveFieldName $basicNumberType)"
+                val q = s"create table $queryTableName ($queryIdFieldName $basicType PRIMARY KEY, $queryExpiresFieldName $basicNumberType)"
                 val ps = connection.prepareStatement(q)
                 try {
                   ps.execute()

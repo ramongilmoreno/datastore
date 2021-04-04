@@ -53,8 +53,8 @@ class V0SQLTest extends AsyncFlatSpec {
     val aTable = tableName("a")
     val bField = fieldValueName("b")
     val cField = fieldValueName("c")
-    assert(u._2 == s"insert into $aTable ($bField, $cField, ${recordActiveName()}, ${recordIdName()}) values (?, ?, ?, ?)")
-    assert(u._3 == Seq("1", "2", recordActiveValueTrue, u._1))
+    assert(u._2 == s"insert into $aTable ($bField, $cField, ${recordIdName()}) values (?, ?, ?)")
+    assert(u._3 == Seq("1", "2", u._1))
   }
 
   it should "be able of doing an update" in {
@@ -65,8 +65,7 @@ class V0SQLTest extends AsyncFlatSpec {
     val bField = fieldValueName("b")
     val cField = fieldValueName("c")
     val idField = recordIdName()
-    val activeField = recordActiveName()
-    assert(u._2 == s"update $aTable set $bField = ?, $cField = ?, $activeField = ? where $idField = ?")
-    assert(u._3 == Seq("1", "2", recordActiveValueTrue, id))
+    assert(u._2 == s"update $aTable set $bField = ?, $cField = ? where $idField = ?")
+    assert(u._3 == Seq("1", "2", id))
   }
 }
