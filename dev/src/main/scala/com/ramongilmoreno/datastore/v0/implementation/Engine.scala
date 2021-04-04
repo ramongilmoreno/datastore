@@ -177,22 +177,29 @@ object Engine {
         case Nil => Future(Right(acc))
         case r :: rest =>
           val u = internalUpdate(r)
-          makeTableExist(r.table)
-            .flatMapRight(_ => makeColumnsExist(r.table, r.data.keySet))
-            .flatMapRight(_ => {
-              try {
-                val ps = connection.prepareStatement(u._2)
+          if (u._2.equals("")) {
+            // No action, continue...
+            exhaust(rest, u._1 :: acc)
+          } else {
+            // Statement needed
+            makeTableExist(r.table)
+              .flatMapRight(_ => makeColumnsExist(r.table, r.data.keySet))
+              .flatMapRight(_ => {
                 try {
-                  (1 to u._3.length).zip(u._3).foreach(x => ps.setObject(x._1, x._2))
-                  ps.execute()
-                  exhaust(rest, u._1 :: acc)
-                } finally {
-                  ps.close()
+                  val ps = connection.prepareStatement(u._2)
+                  try {
+                    (1 to u._3.length).zip(u._3).foreach(x => ps.setObject(x._1, x._2))
+                    ps.execute()
+                    exhaust(rest, u._1 :: acc)
+                  } finally {
+                    ps.close()
+                  }
+                } catch {
+                  case e: Throwable => Future(Left(new IllegalStateException(s"Failed to update[$u]", e)))
                 }
-              } catch {
-                case e: Throwable => Future(Left(new IllegalStateException(s"Failed to update[$u]", e)))
-              }
-            })
+              })
+
+          }
       }
 
       exhaust(records, Nil)
@@ -213,17 +220,31 @@ object Engine {
       val id: (FieldId, RecordId) = (recordIdName(), record.meta.id.getOrElse(UUID.randomUUID().toString))
       val allAndId = all :+ id
       val queryTableName = tableName(record.table)
-      val q: (String, Seq[Any]) = record.meta.id match {
-        case None =>
-          // Insert
-          val columns = allAndId.map(_._1).mkString(", ")
-          val placeHolders = allAndId.map(_ => "?").mkString(", ")
-          (s"insert into $queryTableName ($columns) values ($placeHolders)", allAndId.map(_._2))
-        case Some(_) =>
-          // Update
-          val placeHolders = all.map(f => s"${f._1} = ?").mkString(", ")
-          val queryIdField = recordIdName()
-          (s"update $queryTableName set $placeHolders where $queryIdField = ?", allAndId.map(_._2))
+
+      val q: (String, Seq[Any]) = if (record.meta.active) {
+        record.meta.id match {
+          case None =>
+            // Insert (or delete already deleted item). Only insert has any impact
+            val columns = allAndId.map(_._1).mkString(", ")
+            val placeHolders = allAndId.map(_ => "?").mkString(", ")
+            (s"insert into $queryTableName ($columns) values ($placeHolders)", allAndId.map(_._2))
+          case Some(_) =>
+            // Update
+            val placeHolders = all.map(f => s"${f._1} = ?").mkString(", ")
+            val queryIdField = recordIdName()
+            (s"update $queryTableName set $placeHolders where $queryIdField = ?", allAndId.map(_._2))
+        }
+      } else {
+        // Delete
+        record.meta.id match {
+          case None =>
+            // Insert an item for delete has no effect
+            ("", Seq.empty)
+          case Some(id) =>
+            // Update
+            val queryIdField = recordIdName()
+            (s"delete from $queryTableName where $queryIdField = ?", Seq(id))
+        }
       }
 
       // Completed; return statement and arguments list

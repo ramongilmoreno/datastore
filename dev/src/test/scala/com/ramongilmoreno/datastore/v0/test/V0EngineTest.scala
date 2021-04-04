@@ -1,7 +1,7 @@
 package com.ramongilmoreno.datastore.v0.test
 
 import com.ramongilmoreno.datastore.v0.API._
-import com.ramongilmoreno.datastore.v0.implementation.Engine.InMemoryH2Status
+import com.ramongilmoreno.datastore.v0.implementation.Engine.{InMemoryH2Status, flatMapRightWrapper}
 import com.ramongilmoreno.datastore.v0.implementation.QueryParser
 import org.scalatest._
 
@@ -80,6 +80,34 @@ class V0EngineTest extends AsyncFlatSpec {
           fail(exception)
       }
   }
+
+  it should "be able of ignoring deleted records" in {
+    val status = new InMemoryH2Status()
+    val record = sampleRecord()
+    status.update(List(record)).flatMapRight(ids => {
+      val id = ids.head
+      val q = QueryParser.parse("select b, c from a").get
+      status.query(q)
+        .flatMapRight(found => {
+          assert(found.rows.length == 1)
+          val delete = RecordMetadata(Some(id), None, active = false)
+          status.update(List(Record("a", Map.empty, delete)))
+            .flatMapRight(_ => {
+              status.query(q)
+                .flatMapRight(found2 => {
+                  Future {
+                    Right(assert(found2.rows.length == 0))
+                  }
+                })
+            })
+        })
+    })
+      .flatMap {
+        case Left(e) => fail(e)
+        case Right(x) => Future(x)
+      }
+  }
+
 
   it should "be able of querying with conditions" in {
     val status = new InMemoryH2Status()
