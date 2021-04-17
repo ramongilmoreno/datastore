@@ -1,7 +1,7 @@
 package com.ramongilmoreno.datastore.v0.implementation
 
 import com.ramongilmoreno.datastore.v0.API.{Record, RecordId, RecordMetadata}
-import com.ramongilmoreno.datastore.v0.implementation.Engine.{InMemoryH2Status, Result, flatMapRightWrapper}
+import com.ramongilmoreno.datastore.v0.implementation.Engine.{InMemoryH2Status, Result, TransactionCondition, TransactionResult, flatMapRightWrapper}
 import com.ramongilmoreno.datastore.v0.implementation.EngineManager.extension
 import com.ramongilmoreno.datastore.v0.implementation.QueryParser.Query
 
@@ -23,6 +23,7 @@ object EngineManager {
     val em = new EngineManager(dir)
     em.init().flatMapRight(_ => Future(Right(em)))
   }
+
 }
 
 class EngineManager(dir: Path) {
@@ -163,4 +164,7 @@ class EngineManager(dir: Path) {
       exhaust(0)
     }
   }
+
+  def checkTransactionConditions(conditions: Seq[TransactionCondition])(implicit ec: ExecutionContext): Future[Either[Throwable, TransactionResult]] =
+    status.checkTransactionConditions(conditions)
 }

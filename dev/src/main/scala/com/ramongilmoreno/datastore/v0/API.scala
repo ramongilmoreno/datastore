@@ -28,14 +28,16 @@ object API {
 
   class Query(depends: Option[TransactionId], val query: String) extends Request(depends) {}
 
-  class Response(val transaction: TransactionId) {}
+  class ResponseGood(val transaction: TransactionId) {}
 
-  class UpdateGood(transaction: TransactionId) extends Response(transaction) {}
+  class ResponseBad(val reason: String) {}
 
-  class UpdateBad(transaction: TransactionId, val reason: String) extends Response(transaction) {}
+  class UpdateGood(transaction: TransactionId, val updated: Seq[RecordId]) extends ResponseGood(transaction) {}
 
-  class QueryBad(transaction: TransactionId, val reason: String) extends Response(transaction) {}
+  class UpdateBad(reason: String) extends ResponseBad(reason) {}
 
-  class QueryResult(transaction: TransactionId, val results: List[Record], meta: Option[ValuesActual]) extends Response(transaction)
+  class QueryBad(reason: String) extends ResponseBad(reason) {}
+
+  class QueryResult(transaction: TransactionId, val results: List[Record], meta: Option[ValuesActual]) extends ResponseGood(transaction)
 
 }

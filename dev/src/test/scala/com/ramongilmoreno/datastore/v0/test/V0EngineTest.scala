@@ -1,7 +1,7 @@
 package com.ramongilmoreno.datastore.v0.test
 
 import com.ramongilmoreno.datastore.v0.API._
-import com.ramongilmoreno.datastore.v0.implementation.Engine.{InMemoryH2Status, flatMapRightWrapper}
+import com.ramongilmoreno.datastore.v0.implementation.Engine.{InMemoryH2Status, TransactionBad, TransactionCondition, TransactionGood, flatMapRightWrapper}
 import com.ramongilmoreno.datastore.v0.implementation.QueryParser
 import org.scalatest._
 
@@ -154,6 +154,54 @@ class V0EngineTest extends AsyncFlatSpec {
             }
         case Left(exception) =>
           fail(exception)
+      }
+  }
+
+  it should "check transactions OK" in {
+    val status = new InMemoryH2Status()
+    val records = for (
+      b <- 1 to 3;
+      c <- List("a", "b", "c")
+    ) yield {
+      sampleRecordData(b.toString, c)
+    }
+    status.update(records.toList)
+      .flatMapRight(_ => {
+        val expected = Seq(Record("a", Map("b" -> FieldData("2"))))
+        val q = QueryParser.parse("""select b from a where b = "2" and c = "a"""").get
+        status.checkTransactionConditions(Seq(new TransactionCondition(q, expected)))
+      })
+      .flatMapRight {
+        case TransactionGood() => Future(Right(succeed))
+        case TransactionBad(_) => Future(Right(fail()))
+      }
+      .flatMap {
+        case Left(exception) => fail(exception)
+        case Right(assertion) => assertion
+      }
+  }
+
+  it should "check transactions KO" in {
+    val status = new InMemoryH2Status()
+    val records = for (
+      b <- 1 to 3;
+      c <- List("a", "b", "c")
+    ) yield {
+      sampleRecordData(b.toString, c)
+    }
+    status.update(records.toList)
+      .flatMapRight(_ => {
+        val expected = Seq(Record("a", Map("b" -> FieldData("3"))))
+        val q = QueryParser.parse("""select b from a where b = "2" and c = "a"""").get
+        status.checkTransactionConditions(Seq(new TransactionCondition(q, expected)))
+      })
+      .flatMapRight {
+        case TransactionGood() => Future(Right(fail()))
+        case TransactionBad(_) => Future(Right(succeed))
+      }
+      .flatMap {
+        case Left(exception) => fail(exception)
+        case Right(assertion) => assertion
       }
   }
 }

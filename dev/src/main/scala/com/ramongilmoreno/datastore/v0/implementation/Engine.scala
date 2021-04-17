@@ -20,9 +20,39 @@ class FlatMapRight[A](obj: Future[Either[Throwable, A]]) {
 
 object Engine {
 
-  implicit def flatMapRightWrapper[A](obj: Future[Either[Throwable, A]]): FlatMapRight[A] = new FlatMapRight[A](obj)
-
   val tableAlias: TableId = "t"
+
+  /**
+   * Compares a sequence of records and a result. Returns true if all values are equal
+   */
+  def compare(records: Seq[Record], result: Result): Boolean = {
+    @tailrec
+    def exhaust(index: Int, records: Seq[Record], result: Result): Boolean = {
+      if (index + records.length != result.count()) {
+        // Different count of rows result in false
+        false
+      } else if (records.isEmpty) {
+        // End of rows without differences is OK
+        true
+      } else {
+        // Actual comparison of values
+        if (compare(records.head, index, result)) {
+          exhaust(index + 1, records.tail, result)
+        } else {
+          false
+        }
+      }
+    }
+
+    exhaust(0, records, result)
+  }
+
+  /**
+   * Compares a record and a row in a result. Returns true if all values are equal
+   */
+  def compare(record: Record, index: Int, result: Result): Boolean = {
+    !record.data.map(t => t._2.value == result.value(index, t._1)).exists(_ == false)
+  }
 
   def fieldMetaIntName(field: String): FieldId = fieldMetaName(field, "int")
 
@@ -31,6 +61,8 @@ object Engine {
   private def name(field: String, prefix: String, suffix: String): Id = s"${prefix}_${field}_$suffix".toUpperCase(Locale.US)
 
   def fieldMetaDecimalName(field: String): FieldId = fieldMetaName(field, "decimal")
+
+  implicit def flatMapRightWrapper[A](obj: Future[Either[Throwable, A]]): FlatMapRight[A] = new FlatMapRight[A](obj)
 
   def tableName(table: TableId): String = s"table_$table".toUpperCase(Locale.US)
 
@@ -58,11 +90,13 @@ object Engine {
 
   def recordIdName(): FieldId = recordName("id")
 
-  def recordExpiresName(): FieldId = recordName("expires")
-
   private def recordName(field: String): FieldId = s"record_$field".toUpperCase(Locale.US)
 
+  def recordExpiresName(): FieldId = recordName("expires")
+
   def fieldValueName(field: String): FieldId = name(field, "field", "value")
+
+  trait TransactionResult
 
   trait JDBCStatus {
 
@@ -294,6 +328,27 @@ object Engine {
         }
       })
 
+    def checkTransactionConditions(conditions: Seq[TransactionCondition])(implicit ec: ExecutionContext): Future[Either[Throwable, TransactionResult]] = {
+      def exhaust(conditions: Seq[TransactionCondition], acc: Seq[TransactionConditionResult]): Future[Either[Throwable, TransactionResult]] = {
+        if (conditions.isEmpty) {
+          // Verify that all result are OK
+          if (acc.exists(_.ok == false)) {
+            Future(Right(TransactionBad(acc)))
+          } else {
+            Future(Right(TransactionGood()))
+          }
+        } else {
+          query(conditions.head.query)
+            .flatMapRight(result => {
+              val item: TransactionConditionResult = new TransactionConditionResult(compare(conditions.head.expected, result), result)
+              exhaust(conditions.tail, acc :+ item)
+            })
+        }
+      }
+
+      exhaust(conditions, Seq.empty)
+    }
+
   }
 
   abstract class H2Status extends JDBCStatus {
@@ -423,6 +478,14 @@ object Engine {
         }
       }
   }
+
+  class TransactionCondition(val query: Query, val expected: Seq[Record])
+
+  class TransactionConditionResult(val ok: Boolean, val result: Result)
+
+  case class TransactionGood() extends TransactionResult
+
+  case class TransactionBad(result: Seq[TransactionConditionResult]) extends TransactionResult
 
   case class Result(columns: List[FieldId], rows: Array[(Array[ValueType], RecordMetadata)]) {
     def count(): Int = rows.length
