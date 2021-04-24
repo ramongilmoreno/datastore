@@ -14,6 +14,24 @@ object API {
   type Timestamp = Long
   type TransactionId = Id
 
+  trait Result {
+    def fieldsCount(): Int
+
+    def field(position: Int): FieldId
+
+    def count(): Int
+
+    def meta(row: Int): RecordMetadata
+
+    def value(row: Int, column: FieldId): ValueType
+  }
+
+  trait QueryResponse
+
+  trait UpdateResponse
+
+  trait TransactionResponse
+
   case class RecordMetadata(id: Option[RecordId] = None, expires: Option[Timestamp] = None, active: Boolean = true)
 
   case class FieldMetadata(isInteger: Boolean = false, isDecimal: Boolean = false)
@@ -22,22 +40,28 @@ object API {
 
   case class Record(table: TableId, data: Values[FieldId, FieldData], meta: RecordMetadata = RecordMetadata()) {}
 
-  class Request(val depends: Option[TransactionId]) {}
+  case class QueryRequest(depends: Seq[TransactionId], query: String)
 
-  class Update(depends: Option[TransactionId], val updates: Seq[Record]) extends Request(depends) {}
+  case class QueryResult(result: Result) extends QueryResponse
 
-  class Query(depends: Option[TransactionId], val query: String) extends Request(depends) {}
+  case class QueryFailed(throwable: Throwable) extends QueryResponse
 
-  class ResponseGood(val transaction: TransactionId) {}
+  case class UpdateRequest(depends: Seq[TransactionId], updates: Seq[Record])
 
-  class ResponseBad(val reason: String) {}
+  case class UpdateGood(transaction: TransactionId, ids: Seq[RecordId]) extends UpdateResponse
 
-  class UpdateGood(transaction: TransactionId, val updated: Seq[RecordId]) extends ResponseGood(transaction) {}
+  case class UpdateBad(throwable: Throwable) extends UpdateResponse
 
-  class UpdateBad(reason: String) extends ResponseBad(reason) {}
+  case class TransactionSingleCondition(query: String, expected: Seq[Record])
 
-  class QueryBad(reason: String) extends ResponseBad(reason) {}
+  case class TransactionSingleConditionResult(ok: Boolean, found: Result)
 
-  class QueryResult(transaction: TransactionId, val results: List[Record], meta: Option[ValuesActual]) extends ResponseGood(transaction)
+  case class TransactionRequest(depends: Seq[TransactionId], conditions: Seq[TransactionSingleCondition], updates: Seq[Record])
+
+  case class TransactionGood(transaction: TransactionId, ids: Seq[RecordId]) extends TransactionResponse
+
+  case class TransactionImpossible(found: Seq[TransactionSingleConditionResult]) extends TransactionResponse
+
+  case class TransactionBad(throwable: Throwable) extends TransactionResponse
 
 }

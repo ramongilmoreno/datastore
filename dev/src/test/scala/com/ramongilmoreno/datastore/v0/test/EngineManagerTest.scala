@@ -31,7 +31,7 @@ class EngineManagerTest extends AsyncFlatSpec {
       .flatMap {
         case Left(e) => fail(e)
         case Right(result) =>
-          assert(result.rows.length == 1)
+          assert(result.count() == 1)
           assert(result.value(0, "b") == "1")
           assert(result.value(0, "c") == "2")
       }

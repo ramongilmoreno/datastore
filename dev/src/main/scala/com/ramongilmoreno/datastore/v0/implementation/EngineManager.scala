@@ -1,7 +1,7 @@
 package com.ramongilmoreno.datastore.v0.implementation
 
-import com.ramongilmoreno.datastore.v0.API.{Record, RecordId, RecordMetadata}
-import com.ramongilmoreno.datastore.v0.implementation.Engine.{InMemoryH2Status, Result, TransactionCondition, TransactionResult, flatMapRightWrapper}
+import com.ramongilmoreno.datastore.v0.API.{Record, RecordId, RecordMetadata, Result}
+import com.ramongilmoreno.datastore.v0.implementation.Engine.{InMemoryH2Status, TransactionCondition, TransactionResult, flatMapRightWrapper}
 import com.ramongilmoreno.datastore.v0.implementation.EngineManager.extension
 import com.ramongilmoreno.datastore.v0.implementation.QueryParser.Query
 

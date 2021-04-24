@@ -1,11 +1,13 @@
 package com.ramongilmoreno.datastore.v0.implementation
 
 import com.ramongilmoreno.datastore.v0.API._
+import com.ramongilmoreno.datastore.v0.implementation.Engine.{TransactionCondition, TransactionResult}
 import spray.json.{JsArray, JsBoolean, JsObject, JsString, JsValue, JsonParser}
 
 import java.io.{InputStream, OutputStream, OutputStreamWriter}
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
+import java.util.UUID
 import scala.concurrent.{ExecutionContext, Future}
 import scala.io.Codec
 
@@ -105,4 +107,38 @@ object APIManager {
 
   def saveFieldMetadata(input: FieldMetadata): JsValue =
     JsObject(Map(IS_INTEGER_FIELD -> JsBoolean(input.isInteger), IS_DECIMAL_FIELD -> JsBoolean(input.isDecimal)))
+}
+
+class APIManager(val engineManager: EngineManager) {
+
+  def init()(implicit ec: ExecutionContext): Future[Either[Throwable, Unit]] = engineManager.init
+
+  def query(q: QueryRequest)(implicit ec: ExecutionContext): Future[QueryResponse] = {
+    val query = QueryParser.parse(q.query).get
+    engineManager.query(query).flatMap {
+      case Left(throwable: Throwable) => Future(QueryFailed(throwable))
+      case Right(result: Result) => Future(QueryResult(result))
+    }
+  }
+
+  def update(u: UpdateRequest)(implicit ec: ExecutionContext): Future[UpdateResponse] = {
+    engineManager.update(u.updates.toList).flatMap {
+      case Left(throwable: Throwable) => Future(UpdateBad(throwable))
+      case Right(ids: List[RecordId]) => Future(UpdateGood(t(), ids))
+    }
+  }
+
+  private def t(): TransactionId = UUID.randomUUID().toString
+
+  def transaction(request: TransactionRequest)(implicit ec: ExecutionContext): Future[TransactionResponse] = engineManager.checkTransactionConditions(request.conditions.map(c => new TransactionCondition(QueryParser.parse(c.query).get, c.expected))).flatMap {
+    case Left(throwable: Throwable) => Future(TransactionBad(throwable))
+    case Right(result: TransactionResult) => result match {
+      case Engine.TransactionBad(result) => Future(TransactionImpossible(result.map(r => TransactionSingleConditionResult(r.ok, r.result))))
+      case Engine.TransactionGood() =>
+        engineManager.update(request.updates.toList).flatMap {
+          case Left(throwable: Throwable) => Future(TransactionBad(throwable))
+          case Right(ids: List[RecordId]) => Future(TransactionGood(t(), ids))
+        }
+    }
+  }
 }

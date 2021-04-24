@@ -29,8 +29,10 @@ class V0EngineTest extends AsyncFlatSpec {
     status.query(parsed)
       .flatMap {
         case Right(result) =>
-          assert(result.columns == parsed.fields)
-          assert(result.rows.length == 0)
+          assert(result.fieldsCount() == parsed.fields.length)
+          assert(result.field(0) == "a")
+          assert(result.field(1) == "b")
+          assert(result.count() == 0)
         case Left(exception) =>
           fail(exception)
       }
@@ -45,8 +47,10 @@ class V0EngineTest extends AsyncFlatSpec {
             .flatMap {
               case Right(result) =>
                 Future {
-                  assert(result.columns == List[FieldId]("b", "c"))
-                  assert(result.rows.length == 1)
+                  assert(result.fieldsCount() == 2)
+                  assert(result.field(0) == "b")
+                  assert(result.field(1) == "c")
+                  assert(result.count() == 1)
                   assert(result.meta(0).expires.isEmpty)
                 }
               case Left(exception) =>
@@ -70,7 +74,7 @@ class V0EngineTest extends AsyncFlatSpec {
             .flatMap {
               case Right(result) =>
                 Future {
-                  assert(result.rows.length == 1)
+                  assert(result.count() == 1)
                   assert(result.meta(0).expires == current.meta.expires)
                 }
               case Left(exception) =>
@@ -89,14 +93,14 @@ class V0EngineTest extends AsyncFlatSpec {
       val q = QueryParser.parse("select b, c from a").get
       status.query(q)
         .flatMapRight(found => {
-          assert(found.rows.length == 1)
+          assert(found.count() == 1)
           val delete = RecordMetadata(Some(id), None, active = false)
           status.update(List(Record("a", Map.empty, delete)))
             .flatMapRight(_ => {
               status.query(q)
                 .flatMapRight(found2 => {
                   Future {
-                    Right(assert(found2.rows.length == 0))
+                    Right(assert(found2.count() == 0))
                   }
                 })
             })
@@ -118,7 +122,7 @@ class V0EngineTest extends AsyncFlatSpec {
             .flatMap {
               case Right(result) =>
                 Future {
-                  assert(result.rows.length == 2)
+                  assert(result.count() == 2)
                   assert(Set(result.value(0, "b"), result.value(1, "b")) == Set("1", "3"))
                 }
               case Left(exception) =>
@@ -144,7 +148,7 @@ class V0EngineTest extends AsyncFlatSpec {
             .flatMap {
               case Right(result) =>
                 Future {
-                  assert(result.rows.length == 2)
+                  assert(result.count() == 2)
                   assert(result.value(0, "b") == "2")
                   assert(result.value(1, "b") == "2")
                   assert(Set(result.value(0, "c"), result.value(1, "c")) == Set("a", "c"))

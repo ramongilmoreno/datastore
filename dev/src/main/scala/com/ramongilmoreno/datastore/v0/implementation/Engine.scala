@@ -56,11 +56,11 @@ object Engine {
 
   def fieldMetaIntName(field: String): FieldId = fieldMetaName(field, "int")
 
+  def fieldMetaDecimalName(field: String): FieldId = fieldMetaName(field, "decimal")
+
   private def fieldMetaName(field: String, suffix: String): FieldId = name(field, "meta", suffix)
 
   private def name(field: String, prefix: String, suffix: String): Id = s"${prefix}_${field}_$suffix".toUpperCase(Locale.US)
-
-  def fieldMetaDecimalName(field: String): FieldId = fieldMetaName(field, "decimal")
 
   implicit def flatMapRightWrapper[A](obj: Future[Either[Throwable, A]]): FlatMapRight[A] = new FlatMapRight[A](obj)
 
@@ -83,7 +83,7 @@ object Engine {
         }
       }
 
-      Right(Result(names, f(List()).reverse.toArray))
+      Right(InMemoryResult(names, f(List()).reverse.toArray))
     } catch {
       case e: Throwable => Left(e)
     }
@@ -135,73 +135,6 @@ object Engine {
      */
     def query(q: CharSequence)(implicit ec: ExecutionContext): Future[Either[Throwable, Result]] =
       query(QueryParser.parse(q).get)(ec)
-
-    /**
-     * Query action
-     */
-    def query(q: Query)(implicit ec: ExecutionContext): Future[Either[Throwable, Result]] = tableExists(q.table)
-      .flatMapRight {
-        case false =>
-          // Empty result if table does not exist
-          Future(Right(Result(q.fields, Array.empty)))
-        case true =>
-          // Run query
-          internalSQL(q)
-            .flatMapRight(query => Future {
-              try {
-                val ps = connection.prepareStatement(query._1)
-                try {
-                  val args = query._2
-                  (1 to args.length).zip(args).foreach(f => ps.setObject(f._1, f._2))
-                  result(ps.executeQuery(), q.fields)
-                } finally {
-                  ps.close()
-                }
-              } catch {
-                case e: Throwable => Left(e)
-              }
-            })
-      }
-
-    protected def internalSQL(q: Query)(implicit ec: ExecutionContext): Future[Either[Throwable, WorkInProgress]] = columnsExists(q.table, q.fields.toSet)
-      .flatMapRight(fields => {
-        // Prepare query
-        val f: String = fields.map(t => if (t._2) s"$tableAlias.${fieldValueName(t._1)}" else "\"\" as %s".format(fieldValueName(t._1))).mkString(", ")
-        val c = q.condition match {
-          case Some(c) =>
-            val r = internalCondition(c)
-            (s" and ${r._1}", r._2)
-          case None => ("", List.empty)
-        }
-        val queryTableName = tableName(q.table)
-        val queryIdName = recordIdName()
-        val queryExpiresName = recordExpiresName()
-        Future(Right((s"select $tableAlias.$queryIdName, $tableAlias.$queryExpiresName, $f from $queryTableName as $tableAlias where ($tableAlias.$queryExpiresName is null or $tableAlias.$queryExpiresName >= ?)${c._1}", now() +: c._2)))
-      })
-
-    protected def internalCondition(c: Condition): WorkInProgress = {
-
-      def fov(arg: FieldOrValue, acc: WorkInProgress): WorkInProgress = arg match {
-        case field: Field =>
-          val fname = fieldValueName(field.id)
-          (s"${acc._1}$tableAlias.$fname", acc._2)
-        case value: Value =>
-          (acc._1 + "?", acc._2 :+ value.value)
-      }
-
-      def f(c: Condition, acc: WorkInProgress): WorkInProgress = c match {
-        case two: TwoCondition =>
-          val l = f(two.left, (acc._1 + "(", acc._2))
-          val r = f(two.right, (s"${l._1} ${two.operator} ", l._2))
-          (r._1 + ")", r._2)
-        case single: SingleCondition =>
-          val l = fov(single.left, (acc._1 + "(", acc._2))
-          val r = fov(single.right, (s"${l._1} ${single.operator} ", l._2))
-          (r._1 + ")", r._2)
-      }
-
-      f(c, ("", List.empty))
-    }
 
     def update(records: Seq[Record])(implicit ec: ExecutionContext): Future[Either[Throwable, List[RecordId]]] =
       update(records.toList)
@@ -349,6 +282,73 @@ object Engine {
       exhaust(conditions, Seq.empty)
     }
 
+    /**
+     * Query action
+     */
+    def query(q: Query)(implicit ec: ExecutionContext): Future[Either[Throwable, Result]] = tableExists(q.table)
+      .flatMapRight {
+        case false =>
+          // Empty result if table does not exist
+          Future(Right(InMemoryResult(q.fields, Array.empty)))
+        case true =>
+          // Run query
+          internalSQL(q)
+            .flatMapRight(query => Future {
+              try {
+                val ps = connection.prepareStatement(query._1)
+                try {
+                  val args = query._2
+                  (1 to args.length).zip(args).foreach(f => ps.setObject(f._1, f._2))
+                  result(ps.executeQuery(), q.fields)
+                } finally {
+                  ps.close()
+                }
+              } catch {
+                case e: Throwable => Left(e)
+              }
+            })
+      }
+
+    protected def internalSQL(q: Query)(implicit ec: ExecutionContext): Future[Either[Throwable, WorkInProgress]] = columnsExists(q.table, q.fields.toSet)
+      .flatMapRight(fields => {
+        // Prepare query
+        val f: String = fields.map(t => if (t._2) s"$tableAlias.${fieldValueName(t._1)}" else "\"\" as %s".format(fieldValueName(t._1))).mkString(", ")
+        val c = q.condition match {
+          case Some(c) =>
+            val r = internalCondition(c)
+            (s" and ${r._1}", r._2)
+          case None => ("", List.empty)
+        }
+        val queryTableName = tableName(q.table)
+        val queryIdName = recordIdName()
+        val queryExpiresName = recordExpiresName()
+        Future(Right((s"select $tableAlias.$queryIdName, $tableAlias.$queryExpiresName, $f from $queryTableName as $tableAlias where ($tableAlias.$queryExpiresName is null or $tableAlias.$queryExpiresName >= ?)${c._1}", now() +: c._2)))
+      })
+
+    protected def internalCondition(c: Condition): WorkInProgress = {
+
+      def fov(arg: FieldOrValue, acc: WorkInProgress): WorkInProgress = arg match {
+        case field: Field =>
+          val fname = fieldValueName(field.id)
+          (s"${acc._1}$tableAlias.$fname", acc._2)
+        case value: Value =>
+          (acc._1 + "?", acc._2 :+ value.value)
+      }
+
+      def f(c: Condition, acc: WorkInProgress): WorkInProgress = c match {
+        case two: TwoCondition =>
+          val l = f(two.left, (acc._1 + "(", acc._2))
+          val r = f(two.right, (s"${l._1} ${two.operator} ", l._2))
+          (r._1 + ")", r._2)
+        case single: SingleCondition =>
+          val l = fov(single.left, (acc._1 + "(", acc._2))
+          val r = fov(single.right, (s"${l._1} ${single.operator} ", l._2))
+          (r._1 + ")", r._2)
+      }
+
+      f(c, ("", List.empty))
+    }
+
   }
 
   abstract class H2Status extends JDBCStatus {
@@ -487,12 +487,19 @@ object Engine {
 
   case class TransactionBad(result: Seq[TransactionConditionResult]) extends TransactionResult
 
-  case class Result(columns: List[FieldId], rows: Array[(Array[ValueType], RecordMetadata)]) {
-    def count(): Int = rows.length
+  case class InMemoryResult(columns: List[FieldId], rows: Array[(Array[ValueType], RecordMetadata)]) extends Result {
 
-    def meta(row: Int): RecordMetadata = rows(row)._2
+    val indexed = columns.toIndexedSeq
 
-    def value(row: Int, column: FieldId): ValueType = rows(row)._1(columns.indexOf(column))
+    override def count(): Int = rows.length
+
+    override def meta(row: Int): RecordMetadata = rows(row)._2
+
+    override def value(row: Int, column: FieldId): ValueType = rows(row)._1(columns.indexOf(column))
+
+    override def fieldsCount(): Int = columns.length
+
+    override def field(position: Int): FieldId = indexed(position)
   }
 
   class InMemoryH2Status extends H2Status {
