@@ -2,6 +2,13 @@ name := "datastore"
 version := "0.1"
 scalaVersion := "2.12.11"
 
+// Maven artifact name, for the "publishM2" task
+// https://www.scala-sbt.org/1.x/docs/Publishing.html
+ThisBuild / organization := "com.ramongilmoreno"
+ThisBuild / version      := "0.1-SNAPSHOT"
+// Only Snapshot versions may overwrite published versions
+isSnapshot := true
+
 // DSL parsing
 libraryDependencies += "org.scala-lang.modules" %% "scala-parser-combinators" % "1.1.2"
 
